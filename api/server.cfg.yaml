@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/deepmap/oapi-codegen/HEAD/configuration-schema.json
+package: api
+output: api/v2/server.gen.go
+additional-imports:
+  - package: cylonix/sase/api/v2/models
+    alias: .
+generate:
+  chi-server: true
+  embedded-spec: true
+  strict-server: true
+compatibility:
+  always-prefix-enum-values: true
+output-options:
+  name-normalizer: "ToCamelCaseWithInitialisms"
+  nullable-type: true

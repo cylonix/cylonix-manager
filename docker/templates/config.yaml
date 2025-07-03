@@ -1,0 +1,109 @@
+# Base URL with schemes. Having https as scheme will enable http only secure
+# cookies.
+base_url: "$BASE_URL"
+listening_address: "$LISTENING_ADDRESS"
+
+# ETCD endpoints are strings joined by ','.
+etcd_endpoints: ${SERVICE_SCHEME}://${ETCD_SERVICE_NAME}.${DATABASE_NAMESPACE}:${ETCD_PORT}
+etcd_prefix: "$ETCD_PREFIX"
+
+# IP drawer.
+ip_drawer:
+  scheme: "$SERVICE_SCHEME"
+  host: ${IPDRAWER_SERVICE_NAME}.${DATABASE_NAMESPACE}
+  port: $IPDRAWER_PORT
+
+# Redis DB for caches.
+redis:
+  scheme: "$SERVICE_SCHEME"
+  host: ${REDIS_SERVICE_NAME}.${DATABASE_NAMESPACE}
+  port: $REDIS_PORT
+redis_prefix: "$REDIS_PREFIX"
+
+# Main postgres DB.
+postgres:
+  host: ${POSTGRES_SERVICE_NAME}.${DATABASE_NAMESPACE}
+  port: $PG_PORT
+  username: "$PG_USERNAME"
+  password: "$PG_PASSWORD"
+  ssl_mode: disable
+  db_name: "$PG_DB_NAME"
+
+# Supervisor providing legacy k8s-like functionalities.
+supervisor:
+  scheme: "$SERVICE_SCHEME"
+  host: "$SUPERVISOR_SERVICE_NAME"
+  port: 8989
+
+# Prometheus to provide metrics.
+prometheus:
+  scheme: "$SERVICE_SCHEME"
+  host: ${PROMETHEUS_SERVICE_NAME}.${DATABASE_NAMESPACE}
+  port: $PROMETHEUS_PORT
+
+# The sys admin account for the whole deployment. aka the System Administrator.
+# Username is required so that we can validate if sysadmin has been created.
+# Other information is only needed if keycloak as not setup directly from
+# keycloak admin page. If username is not provided, it will be default to
+# "admin".
+sys_admin:
+  username: "$CYLONIX_ADMIN_USERNAME"
+  password: "$CYLONIX_ADMIN_PASSWORD"
+  email: "$CYLONIX_ADMIN_EMAIL"
+  first_name: "$CYLONIX_ADMIN_FIRST_NAME"
+  last_name: "$CYLONIX_ADMIN_LAST_NAME"
+
+# Optional oauth logins.
+# Provider with empty client ID or secret will be ignored.
+oauth_logins:
+  - provider: google
+    client_id: "$GOOGLE_LOGIN_CLIENT_ID"
+    client_secret: "$GOOGLE_LOGIN_CLIENT_SECRET"
+  - provider: apple
+    client_id: "$APPLE_LOGIN_CLIENT_ID"
+    client_secret: "$APPLE_LOGIN_CLIENT_SECRET"
+    team_id: "$APPLE_LOGIN_TEAM_ID"
+    key_id: "$APPLE_LOGIN_KEY_ID"
+  - provider: github
+    client_id: "$GITHUB_LOGIN_CLIENT_ID"
+    client_secret: "$GITHUB_LOGIN_CLIENT_SECRET"
+  - provider: microsoft
+    client_id: "$MICROSOFT_LOGIN_CLIENT_ID"
+    client_secret: "$MICROSOFT_LOGIN_CLIENT_SECRET"
+
+# Optional Send sms code config.
+# Empty provider will be ignored.
+send_sms_config:
+  provider: "$SEND_SMS_PROVIDER"
+  region_id: "$SEND_SMS_REGION_ID"
+  access_key_id: "$SEND_SMS_ACCESS_KEY_ID"
+  access_key_secret: "$SEND_SMS_ACCESS_KEY_SECRET"
+  request_sign_name: "$SEND_SMS_REQUEST_SIGN_NAME"
+
+# Optional send email config.
+# Empty provider will be ignored.
+send_email_config:
+  provider: "$SEND_EMAIL_PROVIDER"
+  server: "$SEND_EMAIL_RELAY_SERVER"
+  port: "$SEND_EMAIL_RELAY_SERVER_PORT"
+  from_address: "$SEND_EMAIL_FROM_ADDRESS"
+  local_name: "$SEND_EMAIL_LOCAL_NAME"
+  service_account_file: "$SEND_EMAIL_SERVICE_ACCOUNT_FILE"
+
+# Log filter settings.
+#
+#log_filter_config:
+#  log_levels:
+#    - debug
+#    - info
+#    - warn
+#  filters:
+#    key: "namespace"
+#    contain:
+#      # List of namespaces to
+#      - cylonix.io
+
+# Task config
+task_config:
+  log_level: "$TASK_LOG_LEVEL"
+  interval: $TASK_INTERVAL

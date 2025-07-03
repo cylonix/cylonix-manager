@@ -1,0 +1,9 @@
+[submodule "utils"]
+	path = utils
+	url = git@github.com:cylonix/cylonix-utils.git
+[submodule "submodules/openapi"]
+	path = submodules/openapi
+	url = git@github.com:cylonix/cylonix-manager-openapi.git
+[submodule "submodules/headscale"]
+	path = submodules/headscale
+	url = git@github.com:cylonix/headscale.git

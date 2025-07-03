@@ -1,0 +1,17 @@
+[Unit]
+Description=sase data statistics
+After=syslog.target network.target
+
+[Service]
+WorkingDirectory=/sase
+Type=simple
+StartLimitInterval=0
+TimeoutSec=60s
+RestartSec=2s
+Restart=always
+ExecStart=sase-statistics -config /etc/sase/task.conf -startup /etc/sase/startup.conf -hostname sase-manage-hz-1
+NotifyAccess=all
+SuccessExitStatus=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/deepmap/oapi-codegen/HEAD/configuration-schema.json
+package: models
+output: api/v2/models/models.gen.go
+generate:
+  models: true
+compatibility:
+  always-prefix-enum-values: true
+output-options:
+  name-normalizer: "ToCamelCaseWithInitialisms"
+  nullable-type: true

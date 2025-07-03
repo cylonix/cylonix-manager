@@ -1,0 +1,46 @@
+
+FROM golang:1.24.4-alpine AS build-env
+
+WORKDIR /go/src/cylonix/manager
+
+# Pre-download go modules for the dependencies.
+COPY ./clients/fw/go.mod ./clients/fw/go.sum ./clients/fw/
+COPY ./clients/wg/go.mod ./clients/wg/go.sum ./clients/wg/
+COPY ./clients/supervisor/go.mod ./clients/supervisor/go.sum ./clients/supervisor/
+COPY ./submodules/headscale/go.mod ./submodules/headscale/go.sum ./submodules/headscale/
+COPY ./utils/go.mod ./utils/go.sum ./utils/
+COPY ./clients/ipdrawer/go.mod ./clients/ipdrawer/go.sum ./clients/ipdrawer/
+COPY go.mod go.sum ./
+ARG GOPROXY
+RUN export GOPROXY=${GOPROXY}; go mod download -x
+
+# Pre-build here before the following COPY line invalidates the Docker cache.
+
+# Copy the source.
+# Note all API files should be generated already.
+# TODO: after publishing the API generator forks, do API generating here to be
+# consistent on the golang version.
+COPY . .
+
+# see build_docker.sh
+ARG VERSION_LONG=""
+ENV VERSION_LONG=$VERSION_LONG
+ARG VERSION_SHORT=""
+ENV VERSION_SHORT=$VERSION_SHORT
+ARG VERSION_GIT_HASH=""
+ENV VERSION_GIT_HASH=$VERSION_GIT_HASH
+ARG TARGETARCH
+
+RUN GOARCH=$TARGETARCH go install -ldflags="\
+    -X cylonix.io/version.longStamp=$VERSION_LONG \
+    -X cylonix.io/version.shortStamp=$VERSION_SHORT \
+    -X cylonix.io/version.gitCommitStamp=$VERSION_GIT_HASH" \
+    -v ./manager ./cmd/task
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates gettext
+
+COPY --from=build-env /go/bin/* /usr/local/bin/
+COPY docker/entrypoint.sh  /opt
+COPY docker/defaults.sh /opt
+COPY docker/templates /opt/templates
