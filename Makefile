@@ -1,3 +1,6 @@
+# Copyright (c) EZBLOCK INC. & AUTHORS
+# SPDX-License-Identifier: BSD-3-Clause
+
 all: build
 	@echo "build finished"
 
@@ -7,13 +10,10 @@ APP_NAME := cylonix-manager
 all: build
 
 init:
-	git submodule update --init
+	git submodule update --init --recursive
 
 build: force
 	go build -o $(APP_NAME) $(APP_DIR)/main.go
-
-examples: force
-	go build -o build/wg_client examples/wg_client/main.go
 
 clean: force
 	rm $(APP_NAME)

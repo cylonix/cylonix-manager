@@ -1,3 +1,6 @@
+// Copyright (c) EZBLOCK INC. & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
+
 package tools
 
 import (
@@ -20,7 +23,6 @@ type NetDbNode struct {
 	providerName string
 }
 type GlobalConfig struct {
-	// TODO: Enhance for i18n
 	domainToCategory map[string](string)
 	ipNetDb          []NetDbNode
 }
