@@ -162,6 +162,7 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 			}
 			return
 		}
+		logger.WithField("login", login).Debugln("Missing login ID or credential.")
 		err = common.NewBadParamsErr(errors.New("missing login ID or credential"))
 		return
 	}

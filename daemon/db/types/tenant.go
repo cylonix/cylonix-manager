@@ -108,5 +108,8 @@ func (t *TenantConfig) ToModel() *models.TenantConfig {
 		AutoAcceptRoutes:  optional.CopyBoolP(t.AutoAcceptRoutes),
 		AutoApproveDevice: optional.CopyBoolP(t.AutoApproveDevice),
 		WelcomeEmailSent:  optional.CopyBoolP(t.WelcomeEmailSent),
+		MaxUserCount:      optional.IntP((int)(t.MaxUser)),
+		MaxDeviceCount:    optional.IntP((int)(t.MaxDevice)),
+		MaxDevicePerUser:  optional.IntP((int)(t.MaxDevicePerUser)),
 	}
 }

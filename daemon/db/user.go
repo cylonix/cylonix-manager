@@ -423,7 +423,8 @@ func addUser(
 			return nil, err
 		}
 		if uint(userCount) >= tenant.MaxUser {
-			return nil, fmt.Errorf("%w: max user limit reached for namespace %s", ErrMaxUserLimitReached, namespace)
+			return nil, fmt.Errorf("%w: max user limit reached for namespace '%s' (%v)",
+				ErrMaxUserLimitReached, namespace, tenant.MaxUser)
 		}
 	}
 	var userTierID *types.ID
@@ -447,10 +448,27 @@ func addUser(
 		return nil, fmt.Errorf("%w: user tier not specified", ErrBadParams)
 	}
 
-	if networkDomain == nil {
+	userTier, err := GetUserTier(*userTierID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user tier %s: %w", *userTierID, err)
+	}
+
+	if networkDomain == nil || *networkDomain == "" {
 		if tenant.NetworkDomain != "" {
 			networkDomain = &tenant.NetworkDomain
+		} else {
+			return nil, fmt.Errorf("%w: network domain not specified", ErrBadParams)
 		}
+	}
+
+	// Check user limit by the network domain.
+	n, err := UserCount(&namespace, networkDomain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count users for network domain %s: %w", *networkDomain, err)
+	}
+	if n >= int64(userTier.MaxUserCount) {
+		return nil, fmt.Errorf("%w: max user limit reached for network domain %s (%v)",
+			ErrMaxUserLimitReached, *networkDomain, userTier.MaxUserCount)
 	}
 
 	logins := types.UserLoginSlice(loginSlice)

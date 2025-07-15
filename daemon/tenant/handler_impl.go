@@ -148,6 +148,9 @@ func (h *handlerImpl) UpdateConfig(auth interface{}, requestObject api.UpdateTen
 		TenantSetting: types.TenantSetting{
 			AutoApproveDevice: update.AutoApproveDevice,
 			AutoAcceptRoutes:  update.AutoAcceptRoutes,
+			MaxUser:           uint(optional.V(update.MaxUserCount, 0)),
+			MaxDevice:         uint(optional.V(update.MaxDeviceCount, 0)),
+			MaxDevicePerUser:  uint(optional.V(update.MaxDevicePerUser, 0)),
 		},
 	}
 	note := optional.String(requestObject.Params.Note)

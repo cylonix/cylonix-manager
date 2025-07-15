@@ -7,11 +7,9 @@ import (
 	_errors "errors"
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/cylonix/utils"
 	"github.com/cylonix/utils/apikey"
-	"github.com/google/uuid"
 
 	"github.com/go-openapi/errors"
 )
@@ -95,15 +93,6 @@ func sysAuthenticate(token string) (interface{}, error) {
 	}
 	if _errors.Is(err, utils.ErrInternalErr) {
 		return nil, errors.New(500, "internal error for sys admin api key auth")
-	}
-	if token != "" && token == os.Getenv("SASE_MGR_SYS_TOKEN") {
-		return &utils.UserTokenData{
-			IsAdminUser: true,
-			IsSysAdmin:  true,
-			Username:    os.Getenv("SASE_MGR_SYS_TOKEN_USER"),
-			Namespace:   os.Getenv("SASE_MGR_SYS_TOKEN_NAMESPACE"),
-			UserID:      uuid.New(),
-		}, nil
 	}
 	return nil, errors.New(401, "incorrect api key auth for sys admin user")
 }

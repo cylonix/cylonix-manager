@@ -470,6 +470,11 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 	)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to create new user in db.")
+		if errors.Is(err, db.ErrMaxUserLimitReached) ||
+			errors.Is(err, db.ErrBadParams) ||
+			errors.Is(err, db.ErrTenantConfigNotFound) {
+			return common.NewBadParamsErr(err)
+		}
 		return common.ErrInternalErr
 	}
 	login, newErr := db.GetUserLogin(namespace, newUser.UserLogins[0].ID)
@@ -729,6 +734,11 @@ func (h *handlerImpl) UpdateApprovals(auth interface{}, requestObject api.Update
 		if state == models.ApprovalStateApproved {
 			if err = createNewUserFromRegistration(namespace, id, logger); err != nil {
 				log.WithError(err).Errorln("Failed to add newly approved user.")
+				if errors.Is(err, db.ErrMaxUserLimitReached) ||
+					errors.Is(err, db.ErrBadParams) ||
+					errors.Is(err, db.ErrTenantConfigNotFound) {
+					return common.NewBadParamsErr(err)
+				}
 				return common.ErrInternalErr
 			}
 		}

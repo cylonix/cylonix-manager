@@ -11,6 +11,7 @@ import (
 	"cylonix/sase/pkg/optional"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -226,9 +227,9 @@ func (s *oauthSession) NewDefaultTenant() (*types.TenantConfig, error) {
 		Name:      "Default namespace",
 		Namespace: namespace,
 		TenantSetting: types.TenantSetting{
-			MaxUser:          0, // Limit by user pay plan
-			MaxDevice:        0, // Limit by user pay plan
-			MaxDevicePerUser: 0, // Limit by user pay plan
+			MaxUser:          math.MaxUint32, // Limit by user pay plan
+			MaxDevice:        math.MaxUint32, // Limit by user pay plan
+			MaxDevicePerUser: math.MaxUint32, // Limit by user pay plan
 		},
 		UserTierID: &tier.ID,
 	}
@@ -398,7 +399,13 @@ func (s *oauthSession) doLogin() (loginSuccess *models.LoginSuccess, redirect *m
 
 	// Get the sase user. Create one if necessary.
 	if approvalState, err = s.setUser(); approvalState != nil || err != nil {
-		err = common.ErrInternalErr
+		if errors.Is(err, db.ErrMaxUserLimitReached) ||
+			errors.Is(err, db.ErrBadParams) ||
+			errors.Is(err, db.ErrTenantConfigNotFound) {
+			err = common.NewBadParamsErr(err)
+		} else {
+			err = common.ErrInternalErr
+		}
 		if approvalState != nil {
 			// If failed to login due to approval state. Just return the
 			// approval state.
