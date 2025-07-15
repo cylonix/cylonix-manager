@@ -55,6 +55,8 @@ var (
 	keepaliveTimeout   = time.Hour
 	maxPerUserSession  = 10
 	sendChannelBuffer  = 10
+
+	alwaysLimitPerUserSession = true // Set to true to always limit per user session.
 )
 
 type instance struct {
@@ -72,10 +74,13 @@ type client struct {
 	stopCh   chan struct{}
 }
 
-func (c *client) run(logger *logrus.Entry) {
+func (c *client) run(logger *logrus.Entry, onClose func()) {
 	logger = logger.WithField("client", c.String())
 	defer func() {
 		c.socket.Close()
+		if onClose != nil {
+			onClose()
+		}
 		logger.Infoln("Websocket client stopped running and is now closed.")
 	}()
 
@@ -128,6 +133,15 @@ func (n *clientsMap) addClient(logType LogType, c *client) {
 	n.clients[logType] = append(n.clients[logType], c)
 }
 
+func (n *clientsMap) delClient(logType LogType, c *client) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	i := slices.Index(n.clients[logType], c)
+	if i >= 0 {
+		n.clients[logType] = slices.Delete(n.clients[logType], i, i+1)
+	}
+}
+
 func (n *clientsMap) send(userID string, logType LogType, msg []byte, logger *logrus.Entry) error {
 	sent := false
 	sendClients := []*client{}
@@ -170,6 +184,15 @@ func (s *instance) addClient(namespace string, logType LogType, c *client) {
 	}
 	n.addClient(logType, c)
 	s.namespaceClients[namespace] = n
+}
+
+func (s *instance) delClient(namespace string, logType LogType, c *client) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if n, ok := s.namespaceClients[namespace]; ok && n != nil {
+		n.delClient(logType, c)
+		s.namespaceClients[namespace] = n
+	}
 }
 
 func (s *instance) createClient(namespace, name, token string, logType LogType, conn *websocket.Conn) (*client, error) {
@@ -278,7 +301,7 @@ func (s *instance) handler(ctx *gin.Context, logType LogType) {
 	})
 	logger.Infoln("new connection")
 
-	if !auth.IsSysAdmin || true {
+	if !auth.IsSysAdmin || alwaysLimitPerUserSession {
 		if s.clientCount(namespace, auth.Username, logType) > maxPerUserSession {
 			logger.Warnln("Exceeded per user limit.")
 			conn.WriteMessage(
@@ -301,7 +324,10 @@ func (s *instance) handler(ctx *gin.Context, logType LogType) {
 		return
 	}
 	logger.Infoln("Created a new web socket client.")
-	go c.run(logger)
+	go c.run(logger, func() {
+		s.delClient(namespace, logType, c)
+		logger.Infoln("Web socket client is closed and removed from the client map.")
+	})
 }
 
 func Send(namespace, userID string, logType LogType, msg []byte) {

@@ -191,7 +191,7 @@ func GetAlarm(namespace string, id types.AlarmMessageID) (*types.AlarmMessage, e
 
 // GetAlarmList base on filters. Minimum filter is based on namespace.
 // Does not support sorting since there could be many entries and sorting
-// could be expensive.
+// could be expensive. By default it returns the latest entries first.
 func GetAlarmList(
 	namespace, networkDomain *string, userID *types.UserID,
 	noticeLevel *models.NoticeLevel, noticeState *models.NoticeState,
@@ -201,7 +201,7 @@ func GetAlarmList(
 	return getAlarmList(
 		namespace, networkDomain, userID,
 		noticeLevel, noticeState, startTime, endTime,
-		page, pageSize, nil, nil, idList,
+		page, pageSize, optional.P("id"), optional.P("desc"), idList,
 	)
 }
 func getAlarmList(

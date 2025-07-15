@@ -46,7 +46,22 @@ func GetUserList(
 	if namespace != nil {
 		pg = pg.Where("namespace = ? ", *namespace)
 	}
-	pg = filter(pg, filterBy, filterValue)
+	if filterBy != nil && *filterBy != "" && filterValue != nil {
+		if *filterBy == "is_admin_user" || *filterBy == "is_sys_admin" {
+			f := false
+			switch *filterValue {
+			case "true", "1", "yes", "TRUE", "YES":
+				f = true
+			case "false", "0", "no", "FALSE", "NO":
+				f = false
+			default:
+				return nil, 0, fmt.Errorf("invalid value for filter '%s': %s", *filterBy, *filterValue)
+			}
+			pg = filterExact(pg, filterBy, f)
+		} else {
+			pg = filter(pg, filterBy, filterValue)
+		}
+	}
 	if wgEnable != nil {
 		pg = pg.Where("wg_enabled = ?", *wgEnable)
 	}

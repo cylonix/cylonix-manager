@@ -19,6 +19,13 @@ func filter(pg *gorm.DB, filterBy, filterValue *string) *gorm.DB {
 	return pg
 }
 
+func filterExact(pg *gorm.DB, filterBy *string, filterValue interface{}) *gorm.DB {
+	if filterBy != nil && filterValue != nil && *filterBy != "" {
+		pg = pg.Where(*filterBy+" = ?", filterValue)
+	}
+	return pg
+}
+
 func interfaceHasNilValue(i interface{}) bool {
    if i == nil {
       return true
