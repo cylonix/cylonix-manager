@@ -8,6 +8,7 @@ import (
 	pu "cylonix/sase/pkg/utils"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"sync"
@@ -22,6 +23,7 @@ import (
 )
 
 type LogType int
+
 const (
 	Alert       LogType = iota // Alert notices
 	FwL3                       // L3 fw status
@@ -57,6 +59,7 @@ var (
 	sendChannelBuffer  = 10
 
 	alwaysLimitPerUserSession = true // Set to true to always limit per user session.
+	bumpOldestClient          = true // Set to true to bump the oldest client if the limit is reached.
 )
 
 type instance struct {
@@ -76,6 +79,7 @@ type client struct {
 
 func (c *client) run(logger *logrus.Entry, onClose func()) {
 	logger = logger.WithField("client", c.String())
+	ticker := time.NewTicker(keepaliveTimeout)
 	defer func() {
 		c.socket.Close()
 		if onClose != nil {
@@ -83,14 +87,41 @@ func (c *client) run(logger *logrus.Entry, onClose func()) {
 		}
 		logger.Infoln("Websocket client stopped running and is now closed.")
 	}()
-
+	go func() {
+		for {
+			_, p, err := c.socket.ReadMessage()
+			if err != nil {
+				logger.WithError(err).Debug("Client disconnected")
+				select {
+				case c.stopCh <- struct{}{}:
+				default:
+				}
+				return
+			}
+			// JavaScript client sends a ping text message to keep the
+			// connection alive. It is not a ping control message in the
+			// websocket sense as there is no way for js client to send a ping
+			// control message. We echo message back to the client in this case.
+			if string(p) == "ping" {
+				c.socket.WriteMessage(websocket.TextMessage, p)
+			}
+			c.lastSeen = time.Now()
+			ticker.Reset(keepaliveTimeout)
+		}
+	}()
 	logger.Infoln("Websocket client is now connected and running.")
-	ticker := time.NewTicker(keepaliveTimeout)
-	c.socket.SetPingHandler(func(_ string) error {
+	c.socket.SetPingHandler(func(message string) error {
 		logger.Debugln("Websocket received ping.")
 		c.lastSeen = time.Now()
 		ticker.Reset(keepaliveTimeout)
-		return nil
+		// Respond to ping with pong control message.
+		err := c.socket.WriteControl(websocket.PongMessage, []byte(message), time.Now().Add(time.Second))
+		if err == websocket.ErrCloseSent {
+			return nil
+		} else if _, ok := err.(net.Error); ok {
+			return nil
+		}
+		return err
 	})
 
 	for {
@@ -243,6 +274,37 @@ func (s *instance) clientCount(namespace, username string, logType LogType) (cou
 	return
 }
 
+func (s *instance) getClient(namespace, username string, logType LogType) *client {
+	m := s.getClientMap(namespace)
+	if m != nil {
+		m.mutex.Lock()
+		defer m.mutex.Unlock()
+		clients := m.clients[logType]
+		for _, c := range clients {
+			if c.name == username {
+				return c
+			}
+		}
+	}
+	return nil
+}
+
+func (s *instance) bumpOldest(namespace, username string, logType LogType) {
+	c := s.getClient(namespace, username, logType)
+	if c == nil {
+		return
+	}
+	c.socket.WriteMessage(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(
+			websocket.ClosePolicyViolation,
+			"Exceeded per user limit. Bumped by another client for "+logType.String(),
+		),
+	)
+	c.close()
+	s.delClient(namespace, logType, c)
+}
+
 func (s *instance) handler(ctx *gin.Context, logType LogType) {
 	// Key can be set in http cookies, or request header or params.
 	key := ctx.Request.Header.Get("X-API-KEY")
@@ -302,16 +364,26 @@ func (s *instance) handler(ctx *gin.Context, logType LogType) {
 	logger.Infoln("new connection")
 
 	if !auth.IsSysAdmin || alwaysLimitPerUserSession {
-		if s.clientCount(namespace, auth.Username, logType) > maxPerUserSession {
-			logger.Warnln("Exceeded per user limit.")
-			conn.WriteMessage(
-				websocket.CloseMessage,
-				websocket.FormatCloseMessage(
-					websocket.ClosePolicyViolation,
-					"Exceeded per user limit",
-				),
-			)
-			return
+		cnt := s.clientCount(namespace, auth.Username, logType)
+		if cnt > maxPerUserSession {
+			logger.WithField("count", cnt).Warnln("====== Exceeded per user limit ======")
+			if bumpOldestClient {
+				s.bumpOldest(namespace, auth.Username, logType)
+				logger.Warnln("===== Bumped the oldest client ======")
+				conn.WriteMessage(
+					websocket.TextMessage,
+					[]byte("Exceeded per user limit. Bumped the oldest client."),
+				)
+			} else {
+				conn.WriteMessage(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(
+						websocket.ClosePolicyViolation,
+						"Exceeded per user limit",
+					),
+				)
+				return
+			}
 		}
 	}
 
