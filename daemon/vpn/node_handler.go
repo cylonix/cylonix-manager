@@ -305,6 +305,7 @@ func (n *NodeHandler) AuthStatus(authURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	log.Println("AuthStatus: user has signed in as", userTokenData.Username, userTokenData.UserID.String())
 	return userTokenData.UserID.String(), nil
 }
 
