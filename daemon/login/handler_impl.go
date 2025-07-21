@@ -229,13 +229,6 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 					return
 				}
 			}
-			if optional.Bool(params.WantVpnAuthKey) {
-				loginSuccess.VpnAuthKey, err = getLoginSuccessVpnAuthKey(namespace, params.AssignIP, loginSuccess, logger)
-				if err != nil {
-					logger.WithError(err).Errorln("Failed to get vpn api key.")
-					return
-				}
-			}
 		}
 		logger.Infoln("Login success")
 	} else {
@@ -487,15 +480,6 @@ func (h *handlerImpl) AddOauthToken(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if loginSuccess != nil && optional.Bool(params.WantVpnAuthKey) {
-		loginSuccess.VpnAuthKey, err = getLoginSuccessVpnAuthKey(
-			namespace, nil /* no assigned ip */, loginSuccess, logger,
-		)
-		if err != nil {
-			logger.WithError(err).Errorln("Failed to get vpn api key.")
-			return nil, nil, nil, err
-		}
-	}
 	return loginSuccess, redirect, approvalState, nil
 }
 
@@ -521,27 +505,6 @@ func (h *handlerImpl) RefreshToken(auth interface{}, requestObject api.RefreshTo
 		return nil, err
 	}
 	return loginSuccess, nil
-}
-
-func getLoginSuccessVpnAuthKey(namespace string, wantIP *string, loginSuccess *models.LoginSuccess, logger *logrus.Entry) (*string, error) {
-	loginName := ""
-	if len(loginSuccess.User.Logins) > 0 {
-		loginName = loginSuccess.User.Logins[0].Login
-	}
-	logger.
-		WithField("login-name", loginName).
-		WithField("logins", loginSuccess.User.Logins).
-		Debugln("create vpn pre-auth key.")
-	return vpn.CreatePreAuthKey(
-		&vpn.UserInfo{
-			Namespace: namespace,
-			UserID:    types.ID(loginSuccess.User.UserID),
-			LoginName: loginName,
-			Network:   optional.V(loginSuccess.User.NetworkDomain, ""),
-		},
-		loginSuccess.APIKey,
-		wantIP,
-	)
 }
 
 func (h *handlerImpl) Logout(auth interface{}, requestObject api.LogoutRequestObject) (*models.RedirectURLConfig, error) {

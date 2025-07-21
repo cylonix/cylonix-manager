@@ -4,7 +4,6 @@
 package vpn
 
 import (
-	"cylonix/sase/daemon/common"
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/optional"
@@ -129,25 +128,6 @@ func (n *NodeHandler) updateNode(wgInfo *types.WgInfo, node *hstypes.Node, nodeK
 			return err
 		}
 	}
-
-	// Check if needs to set to a new exit node.
-	if node.AuthKey != nil {
-		wgName, err := utils.WgServerNameFromToken(node.AuthKey.Key)
-		if err != nil {
-			return fmt.Errorf("failed to get wg name from token to update node: %w", err)
-		}
-		if wgName != wgInfo.WgName {
-			if update != nil {
-				wgInfo.Addresses = update.Addresses
-				wgInfo.NodeID = update.NodeID
-				wgInfo.PublicKeyHex = update.PublicKeyHex
-				wgInfo.AllowedIPs = update.AllowedIPs
-			}
-			if _, err := common.ChangeExitNode(wgInfo, wgName, nil, n.logger); err != nil {
-				return fmt.Errorf("failed to change exit node: %w", err)
-			}
-		}
-	}
 	return nil
 }
 
@@ -193,12 +173,6 @@ func (n *NodeHandler) addNewNode(namespace string, userID types.UserID, machineK
 	}
 
 	wgName := ""
-	if node.AuthKey != nil {
-		wgName, err = utils.WgServerNameFromToken(node.AuthKey.Key)
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	device, err := n.vpnService.NewDevice(
 		namespace, userID, nodeIDUint64P(node),
@@ -690,8 +664,5 @@ func (n *NodeHandler) NetworkDomain(user *hstypes.User) ([]byte, error) {
 }
 
 func (n *NodeHandler) RefreshToken(node *hstypes.Node) error {
-	if node.AuthKey == nil {
-		return errors.New("nil auth key")
-	}
-	return utils.RefreshToken(node.AuthKey.Key)
+	return nil
 }

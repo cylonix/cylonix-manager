@@ -76,7 +76,7 @@ test:
 	rm ./daemon/test.db ./daemon/database/test.db ./pkg/hua/test.db
 
 .PHONY: alpine docker
-RELEASE?=v1.0
+RELEASE?=v1.0.1
 VERSION:=$(shell git describe --tags --exact-match 2> /dev/null || \
 				git rev-parse --short HEAD || echo "unknown")
 REVISION:=$(shell git rev-parse HEAD)

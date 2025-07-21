@@ -10,7 +10,6 @@ import (
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/optional"
-	"cylonix/sase/pkg/vpn"
 	"errors"
 	"time"
 
@@ -75,7 +74,6 @@ func (h *handlerImpl) CreateQrCode(auth interface{}, requestObject api.CreateQrC
 		State:          string(models.QrCodeTokenDataStateCreated),
 		TokenType:      string(params.QrCodeType),
 		CreatedAt:      time.Now().Unix(),
-		WantVpnAuthKey: optional.Bool(r.WantVpnAuthKey),
 	}
 
 	token, _, _, logger := common.ParseToken(auth, "crete-qr-code", "Create QR Code", h.logger)
@@ -284,24 +282,6 @@ func (h *handlerImpl) CheckQrCodeState(auth interface{}, requestObject api.Check
 	}
 	companyName := tenant.Name
 
-	var vpnAuthKey *string
-	if data.WantVpnAuthKey {
-		vpnAuthKey, err = vpn.CreatePreAuthKey(
-			&vpn.UserInfo{
-				Namespace: namespace,
-				UserID:    user.ID,
-				LoginName: user.UserBaseInfo.LoginName,
-				Network:   optional.V(user.NetworkDomain, ""),
-			},
-			token.Key(),
-			nil /* no assigned ip */,
-		)
-		if err != nil {
-			logger.WithError(err).Errorln("Failed to create vpn pre auth key.")
-			return nil, common.ErrInternalErr
-		}
-	}
-
 	// All done. Delete token before returning.
 	qrToken.Delete()
 	return &models.QrCodeTokenData{
@@ -312,7 +292,6 @@ func (h *handlerImpl) CheckQrCodeState(auth interface{}, requestObject api.Check
 			Key: data.GranterUserToken,
 			TTL: optional.IntP(1800),
 		},
-		VpnAuthKey: vpnAuthKey,
 		Tenant: &models.Tenant{
 			Name:      companyName,
 			Namespace: &user.Namespace,

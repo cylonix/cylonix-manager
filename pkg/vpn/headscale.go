@@ -132,7 +132,7 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 	return user, nil
 }
 
-func CreatePreAuthKey(userInfo *UserInfo, token string, ip *string) (*string, error) {
+func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*string, error) {
 	if headscale == nil {
 		return nil, ErrHeadscaleNotInitialized
 	}
@@ -141,12 +141,12 @@ func CreatePreAuthKey(userInfo *UserInfo, token string, ip *string) (*string, er
 		return nil, err
 	}
 	request := &v1.CreatePreAuthKeyRequest{
-		User:       user.Name,
-		Reusable:   true,
-		Expiration: timestamppb.New(time.Now().Add(time.Hour * 90 * 24)),
-		Key:        &token,
-		Namespace:  &userInfo.Namespace,
-		Ipv4:       ip,
+		User:        user.Name,
+		Reusable:    true,
+		Expiration:  timestamppb.New(time.Now().Add(time.Hour * 90 * 24)),
+		Description: &description,
+		Namespace:   &userInfo.Namespace,
+		Ipv4:        ip,
 	}
 	client := getHsClient()
 	ctx, cancel := newHsClientContext()
