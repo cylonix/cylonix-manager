@@ -19,10 +19,14 @@ type smsLogin struct {
 	phone       string
 	redirectURL *string
 	forSession  string
+	inviteCode  string
 	logger      *logrus.Entry
 }
 
-func newSmsLogin(namespace, phoneNum, smsCode string, redirectURL *string, forSession string, logger *logrus.Entry) (*smsLogin, error) {
+func newSmsLogin(
+	namespace, phoneNum, smsCode string, redirectURL *string,
+	forSession, inviteCode string, logger *logrus.Entry,
+) (*smsLogin, error) {
 	logger = logger.WithField(ulog.Phone, phoneNum).WithField(ulog.Namespace, namespace)
 	if valid, err := common.CheckSmsCode(phoneNum, smsCode); err != nil || !valid {
 		if err != nil {
@@ -41,6 +45,7 @@ func newSmsLogin(namespace, phoneNum, smsCode string, redirectURL *string, forSe
 		phone:       phoneNum,
 		redirectURL: redirectURL,
 		forSession:  forSession,
+		inviteCode:  inviteCode,
 		logger:      logger,
 	}, nil
 }
@@ -50,7 +55,10 @@ func (s *smsLogin) userLogin() *types.UserLogin {
 }
 
 func (s *smsLogin) doLogin() (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
-	l, approvalState, err := newLoginSession(s.namespace, s.redirectURL, s.userLogin(), s.forSession, s.logger)
+	l, approvalState, err := newLoginSession(
+		s.namespace, s.redirectURL, s.userLogin(),
+		s.forSession, s.inviteCode, s.logger,
+	)
 	if approvalState != nil || err != nil {
 		return nil, nil, approvalState, err
 	}
@@ -58,8 +66,14 @@ func (s *smsLogin) doLogin() (*models.LoginSuccess, *models.RedirectURLConfig, *
 	return loginSuccess, redirect, nil, err
 }
 
-func smsCodeLogin(namespace, phone, smsCode string, redirectURL *string, forSession string, logger *logrus.Entry) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
-	smsLogin, err := newSmsLogin(namespace, phone, smsCode, redirectURL, forSession, logger)
+func smsCodeLogin(
+	namespace, phone, smsCode string, redirectURL *string,
+	forSession, inviteCode string, logger *logrus.Entry,
+) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
+	smsLogin, err := newSmsLogin(
+		namespace, phone, smsCode, redirectURL,
+		forSession, inviteCode, logger,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}

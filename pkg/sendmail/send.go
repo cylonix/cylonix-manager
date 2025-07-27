@@ -151,14 +151,14 @@ func SendCodeWithSTMP(to, code string) (from string, err error) {
 
 func SendCode(to, code string) (from string, err error) {
 	body := fmt.Sprintf("<p>Here is your temporary code:</p><h2>%v</h2><p>Please don't share it with anyone else.</p>", code)
-	if err = SendEmail(to, sendCodeSubject, body); err == nil {
+	if err = SendEmail([]string{to}, sendCodeSubject, body); err == nil {
 		from = instance.From()
 	}
 	return
 }
 
-func SendEmail(to, subject, body string) error {
-	return instance.Send(instance.From(), subject, body, []string{to}, nil, nil)
+func SendEmail(to []string, subject, body string) error {
+	return instance.Send(instance.From(), subject, body, to, nil, nil)
 }
 
 func SendEmailWithSMTP(to, subject, body string) error {

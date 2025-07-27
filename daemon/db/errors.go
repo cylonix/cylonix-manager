@@ -26,6 +26,7 @@ var (
 	ErrUserFriendRequestExists    = errors.New("user friend request info already exists")
 	ErrUserApprovalExists         = errors.New("user approval info already exists")
 	ErrUserApprovalNotExists      = errors.New("user approval info does not exist")
+	ErrUserInviteNotExists        = errors.New("user invite does not exist")
 	ErrDeviceNotExistsInUser      = errors.New("device does not exist in user")
 	ErrDeviceWgInfoNotExists      = errors.New("device wg info does not exist")
 	ErrUserFriendNotExists        = errors.New("friend does not exist")

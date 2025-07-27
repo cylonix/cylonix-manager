@@ -7,9 +7,12 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/pkg/optional"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/lib/pq"
+	"github.com/oapi-codegen/runtime/types"
 	"gorm.io/gorm"
 )
 
@@ -376,4 +379,55 @@ func (l UserApprovalSlice) ToModel() []models.UserApprovalInfo {
 		list = append(list, *v.ToModel())
 	}
 	return list
+}
+
+type UserInvite struct {
+	Model
+	Namespace     string
+	NetworkDomain string
+	Code          string       `gorm:"uniqueIndex"`
+	InvitedByID   UserID       `gorm:"type:uuid"`
+	InvitedBy     UserBaseInfo `gorm:"constraint:OnDelete:SET NULL;"`
+	Emails        string
+	Role          string
+}
+
+func (ui *UserInvite) ToModel() (*models.UserInvite, error) {
+	if ui == nil {
+		return nil, nil
+	}
+	emails, err := SliceMap(strings.Split(ui.Emails, ","), func(s string) (types.Email, error) {
+		var email types.Email
+		err := email.UnmarshalJSON([]byte(s))
+		return email, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse emails (%v): %w", ui.Emails, err)
+	}
+	return &models.UserInvite{
+		ID:            ui.ID.UUID(),
+		Namespace:     ui.Namespace,
+		NetworkDomain: ui.NetworkDomain,
+		Code:          ui.Code,
+		InvitedBy:     *ui.InvitedBy.ShortInfo(),
+		Emails:        emails,
+		Role:          ui.Role,
+		CreatedAt:     ui.CreatedAt.Unix(),
+	}, nil
+}
+
+func (ui *UserInvite) FromModel(m *models.UserInvite) *UserInvite {
+	if m == nil {
+		return nil
+	}
+	emails, _ := SliceMap(m.Emails, func(s types.Email) (string, error) { return string(s), nil })
+	return &UserInvite{
+		Model:         Model{ID: UUIDToID(m.ID)},
+		Namespace:     m.Namespace,
+		NetworkDomain: m.NetworkDomain,
+		Code:          m.Code,
+		Role:          m.Role,
+		InvitedByID:   UUIDToID(m.InvitedBy.UserID),
+		Emails:        strings.Join(emails, ","),
+	}
 }

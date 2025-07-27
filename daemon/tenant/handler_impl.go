@@ -542,7 +542,7 @@ func sendWelcomeEmail(namespace, email, password string) error {
 	id := fmt.Sprintf("Your enterprise ID is %v.", namespace)
 	login := fmt.Sprintf("Login username is your email %v and initial password is %v</p>.", email, password)
 	msg := fmt.Sprintf("<p>%v %v %v</p>.", welcome, id, login)
-	return sendmail.SendEmail(email, "Welcome to cylonix", msg)
+	return sendmail.SendEmail([]string{email}, "Welcome to cylonix", msg)
 }
 func (h *handlerImpl) UpdateTenantRegistration(auth interface{}, requestObject api.UpdateTenantRegistrationRequestObject) (password string, err error) {
 	token, _, userID, logger := common.ParseToken(auth, "update-tenant-registration", "Update tenant registration", h.logger)

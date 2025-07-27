@@ -12,6 +12,7 @@ import (
 	"cylonix/sase/pkg/vpn"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/cylonix/utils"
 	"github.com/sirupsen/logrus"
@@ -21,6 +22,7 @@ type loginSession struct {
 	namespace   string
 	provider    string
 	forSession  string // Login is for a session requested by the app.
+	inviteCode  string // Invitation code to join a network domain.
 	redirectURL *string
 	wgName      string
 	loginType   types.LoginType
@@ -194,7 +196,7 @@ func (s *loginSession) result() (*models.LoginSuccess, *models.RedirectURLConfig
 
 func newLoginSession(
 	namespace string, redirectURL *string, login *types.UserLogin,
-	forSession string,
+	forSession, inviteCode string,
 	logger *logrus.Entry,
 ) (*loginSession, *models.ApprovalState, error) {
 	tenant, err := db.GetTenantConfigByNamespace(namespace)
@@ -205,7 +207,20 @@ func newLoginSession(
 		logger.WithError(err).Errorln("Failed to get tenant information.")
 		return nil, nil, common.ErrInternalErr
 	}
-	_, user, approvalState, err := getUser(false, login, "", "", nil, nil, nil, logger)
+	var networkDomain *string
+	if inviteCode != "" && tenant.NetworkDomain == "" {
+		invite, err := db.GetUserInviteByCode(inviteCode)
+		if err != nil {
+			if errors.Is(err, db.ErrUserInviteNotExists) {
+				err = fmt.Errorf("invalid invitation code: %s", inviteCode)
+				return nil, nil, common.NewBadParamsErr(err)
+			}
+			logger.WithError(err).Errorln("Failed to get user invite by code.")
+			return nil, nil, common.ErrInternalErr
+		}
+		networkDomain = &invite.NetworkDomain
+	}
+	_, user, approvalState, err := getUser(false, login, "", "", nil, nil, networkDomain, logger)
 	if err != nil || approvalState != nil {
 		state := approvalState.ToModel()
 		logger.WithError(err).Errorln("Failed to get user.")
@@ -214,6 +229,7 @@ func newLoginSession(
 	return &loginSession{
 		namespace:   namespace,
 		forSession:  forSession,
+		inviteCode:  inviteCode,
 		tenantID:    tenant.ID,
 		user:        user,
 		loginType:   login.LoginType,
@@ -225,7 +241,7 @@ func newLoginSession(
 
 func loginSuccessFromUserToken(
 	token *utils.UserTokenData, reuseToken bool, redirect *string,
-	forSession string,
+	forSession, inviteCode string,
 	logger *logrus.Entry,
 ) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
 	login, err := db.GetUserLoginByUserIDAndLoginType(
@@ -234,7 +250,7 @@ func loginSuccessFromUserToken(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	s, state, err := newLoginSession(token.Namespace, redirect, login, forSession, logger)
+	s, state, err := newLoginSession(token.Namespace, redirect, login, forSession, inviteCode, logger)
 	if state != nil || err != nil {
 		return nil, nil, state, err
 	}

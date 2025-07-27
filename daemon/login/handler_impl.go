@@ -128,19 +128,22 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 	params := requestObject.Params
 	token, _, _, logger := common.ParseToken(auth, "direct-login", "Direct login", h.logger)
 	logger = h.logger.WithFields(logrus.Fields{
-		ulog.Handle:    "direct-login",
-		"login-id":     optional.V(params.LoginID, ""),
-		"session-id":   optional.V(params.SessionID, ""),
-		ulog.LoginType: params.LoginType,
+		ulog.Handle:       "direct-login",
+		"login-id":        optional.V(params.LoginID, ""),
+		"session-id":      optional.V(params.SessionID, ""),
+		"invitation-code": optional.V(params.InvitationCode, ""),
+		ulog.LoginType:    params.LoginType,
 	})
 
 	sessionID := optional.String(params.SessionID)
+	inviteCode := optional.String(params.InvitationCode)
 
 	// Oauth success redirect will call this api directly without any parameters
 	if token != nil && params.Credential == nil {
 		logger.Debugln("Login with token.")
 		loginSuccess, redirect, approvalState, err = loginSuccessFromUserToken(
-			token, true /* reuse token */, params.RedirectURL, sessionID, logger,
+			token, true /* reuse token */, params.RedirectURL, sessionID,
+			inviteCode, logger,
 		)
 		return
 	}
@@ -189,7 +192,7 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 	case models.LoginTypeUsername:
 		logger = logger.WithField(ulog.Username, *params.LoginID)
 		loginSuccess, redirect, approvalState, additionalAuth, err = h.passwordLogin(
-			namespace, sessionID, *params.LoginID,
+			namespace, sessionID, inviteCode, *params.LoginID,
 			*params.Credential, wgName, params, params.RedirectURL, logger,
 		)
 		// Ignore redirect if user didn't ask for it.
@@ -201,13 +204,13 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 		logger = logger.WithField(ulog.Phone, *params.LoginID)
 		loginSuccess, redirect, approvalState, err = smsCodeLogin(
 			namespace, *params.LoginID, *params.Credential,
-			params.RedirectURL, sessionID, logger,
+			params.RedirectURL, sessionID, inviteCode, logger,
 		)
 	case models.LoginTypeEmail:
 		logger = logger.WithField("login-id", *params.LoginID)
 		loginSuccess, redirect, err = otpTokenLogin(
 			*params.LoginID, *params.Credential, params.RedirectURL,
-			sessionID, logger,
+			sessionID, inviteCode, logger,
 		)
 	default:
 		err = fmt.Errorf("invalid direct login type: %v", params.LoginType)
@@ -286,10 +289,12 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 		userType = common.UserTypeAdmin
 	}
 	logger := h.logger.WithFields(logrus.Fields{
-		ulog.Handle:    "get-redirect-url",
-		"provider":     params.Provider,
-		"user-type":    userType,
-		"redirect-url": params.RedirectURL,
+		ulog.Handle:       "get-redirect-url",
+		"provider":        params.Provider,
+		"user-type":       userType,
+		"session-id":      optional.V(params.SessionID, ""),
+		"invitation-code": optional.V(params.InvitationCode, ""),
+		"redirect-url":    params.RedirectURL,
 	})
 	// Don't log above info before login success.
 	//common.LogWithLongDashes("Get redirect URL", logger)
@@ -360,7 +365,9 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 		appListeningPort = int(*params.AppListeningPort)
 	}
 	return newOauthLoginRedirectURL(
-		provider, namespace, common.UserTypeUser, *params.Provider, optional.V(params.SessionID, ""),
+		provider, namespace, common.UserTypeUser, *params.Provider,
+		optional.V(params.SessionID, ""),
+		optional.V(params.InvitationCode, ""),
 		optional.V(params.RedirectURL, ""), appListeningPort, logger,
 	)
 }
@@ -396,7 +403,7 @@ func (h *handlerImpl) OauthCallbackPost(auth interface{}, requestObject api.Oaut
 }
 
 func (h *handlerImpl) passwordLogin(
-	namespace, sessionID, username, password, wgName string,
+	namespace, sessionID, inviteCode, username, password, wgName string,
 	params models.LoginParams, redirectURL *string, logger *logrus.Entry) (
 	*models.LoginSuccess, *models.RedirectURLConfig,
 	*models.ApprovalState, *models.AdditionalAuthInfo, error,
@@ -443,7 +450,7 @@ func (h *handlerImpl) passwordLogin(
 	if namespace == "" {
 		namespace = login.Namespace
 	}
-	l, approvalState, err := newLoginSession(namespace, redirectURL, login, sessionID, logger)
+	l, approvalState, err := newLoginSession(namespace, redirectURL, login, sessionID, inviteCode, logger)
 	if approvalState != nil || err != nil {
 		return nil, nil, approvalState, nil, err
 	}
@@ -453,8 +460,8 @@ func (h *handlerImpl) passwordLogin(
 }
 
 func (h *handlerImpl) AddOauthToken(
-		auth interface{}, requestObject api.AddOauthTokenRequestObject,
-	) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
+	auth interface{}, requestObject api.AddOauthTokenRequestObject,
+) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
 	params := requestObject.Params
 	token := requestObject.Body.Token
 	if token == nil {
@@ -499,7 +506,7 @@ func (h *handlerImpl) RefreshToken(auth interface{}, requestObject api.RefreshTo
 	}
 
 	// TODO: add token rotation controlled by backend.
-	loginSuccess, _, _, err := loginSuccessFromUserToken(token, true /* reuse token */, nil, "", logger)
+	loginSuccess, _, _, err := loginSuccessFromUserToken(token, true /* reuse token */, nil, "", "", logger)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to refresh token.")
 		return nil, err

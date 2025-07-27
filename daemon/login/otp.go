@@ -16,7 +16,10 @@ import (
 )
 
 // Login with an OTP i.e. a temp token and a short one-time code.
-func otpTokenLogin(token, code string, redirectURL *string, forSession string, logger *logrus.Entry) (*models.LoginSuccess, *models.RedirectURLConfig, error) {
+func otpTokenLogin(
+	token, code string, redirectURL *string, forSession, inviteCode string,
+	logger *logrus.Entry,
+) (*models.LoginSuccess, *models.RedirectURLConfig, error) {
 	t := &utils.OtpToken{
 		Token: token,
 	}
@@ -70,6 +73,7 @@ func otpTokenLogin(token, code string, redirectURL *string, forSession string, l
 	l := &loginSession{
 		namespace:   namespace,
 		forSession:  forSession,
+		inviteCode:  inviteCode,
 		tokenData:   newToken,
 		user:        user,
 		login:       login,

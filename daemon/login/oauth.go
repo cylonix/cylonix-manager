@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,7 +64,11 @@ func oauthUserToUserLogin(namespace string, user *oauth.User, password string) (
 	}).Normalize()
 }
 
-func newOauthLoginRedirectURL(provider oauth.Provider, namespace, userType, providerName, stateTokenID, redirectURL string, appListeningPort int, logger *logrus.Entry) (*models.RedirectURLConfig, error) {
+func newOauthLoginRedirectURL(
+	provider oauth.Provider, namespace, userType,
+	providerName, stateTokenID, invitationCode, redirectURL string,
+	appListeningPort int, logger *logrus.Entry,
+) (*models.RedirectURLConfig, error) {
 	config := provider.Config(namespace)
 	if config.ConfigURL == "" {
 		return nil, common.ErrInternalErr
@@ -74,6 +79,7 @@ func newOauthLoginRedirectURL(provider oauth.Provider, namespace, userType, prov
 		UserType:         userType,
 		AppListeningPort: appListeningPort,
 		RedirectURL:      redirectURL,
+		InviteCode:       invitationCode,
 	}
 	logger.WithField("state", stateTokenID).Debugln("oauth login redirect url")
 	var stateToken *utils.OauthStateToken
@@ -102,6 +108,7 @@ func newOauthLoginRedirectURL(provider oauth.Provider, namespace, userType, prov
 		stateTokenData.Provider = providerName
 		stateTokenData.UserType = userType
 		stateTokenData.Namespace = namespace
+		stateTokenData.InviteCode = invitationCode
 		if err = stateToken.Update(stateTokenData, time.Duration(0)); err != nil {
 			logger.WithError(err).Errorln("Failed to update state token data.")
 			return nil, common.ErrInternalErr
@@ -310,10 +317,34 @@ func (s *oauthSession) setUser() (*models.ApprovalState, error) {
 		s.logger.WithError(err).Debugln("Failed to convert to user login")
 		return nil, err
 	}
+	networkDomain := s.state.NetworkDomain
+	invitationCode := s.state.InviteCode
 	ou := s.oauthUser
+	roles := ou.Roles
+	if invitationCode != "" {
+		invite, err := db.GetUserInviteByCode(invitationCode)
+		if err != nil {
+			if errors.Is(err, db.ErrUserInviteNotExists) {
+				s.logger.WithField("code", invitationCode).Debugln("Invitation code not found.")
+				return nil, err
+			}
+			s.logger.WithError(err).Errorln("Failed to get user invite by code.")
+			return nil, err
+		}
+		emails := strings.Split(strings.ToLower(invite.Emails), ",")
+		if !slices.Contains(emails, strings.ToLower(s.oauthUser.Email)) {
+			s.logger.WithField("email", s.oauthUser.Email).Debugln("Email not in invite emails.")
+			return nil, db.ErrUserInviteNotExists
+		}
+		networkDomain = invite.NetworkDomain
+		if invite.Role != "" {
+			roles = append(roles, invite.Role)
+		}
+	}
+
 	loginUser, user, state, err := getUser(
-		ou.IsSysAdmin, login, ou.Email, ou.Phone, ou.Roles, ou.Attributes,
-		&s.state.NetworkDomain, s.logger,
+		ou.IsSysAdmin, login, ou.Email, ou.Phone, roles, ou.Attributes,
+		&networkDomain, s.logger,
 	)
 	if state != nil || err != nil {
 		s.logger.WithError(err).Debugln("Get user failed.")
@@ -401,6 +432,7 @@ func (s *oauthSession) doLogin() (loginSuccess *models.LoginSuccess, redirect *m
 	if approvalState, err = s.setUser(); approvalState != nil || err != nil {
 		if errors.Is(err, db.ErrMaxUserLimitReached) ||
 			errors.Is(err, db.ErrBadParams) ||
+			errors.Is(err, db.ErrUserInviteNotExists) ||
 			errors.Is(err, db.ErrTenantConfigNotFound) {
 			err = common.NewBadParamsErr(err)
 		} else {

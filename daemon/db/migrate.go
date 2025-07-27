@@ -123,6 +123,19 @@ var (
 			},
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
+		{
+			ID: "202507261900",
+			Migrate: func(tx *gorm.DB) error {
+				log.Printf(`
+					Migrating to add user invite support.
+				`)
+				return tx.AutoMigrate(
+					&types.UserInvite{},
+					&utils.OauthStateTokenData{},
+				)
+			},
+			Rollback: func(db *gorm.DB) error { return nil },
+		},
 	}
 )
 

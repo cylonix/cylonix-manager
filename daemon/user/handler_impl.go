@@ -886,10 +886,10 @@ func (h *handlerImpl) SendUsername(requestObject api.SendUsernameRequestObject) 
 		return common.ErrInternalErr
 	}
 
-	s := "Here is your. If you have not requested this please " +
+	s := "Here is your username. If you have not requested this please " +
 		"contact your administrator or reply to this email directly."
 	msg := fmt.Sprintf("<p>%v</p><h3 style=\"text-align:center;\">%v</h3>", s, username)
-	if err := sendmail.SendEmail(*email, "Your username", msg); err != nil {
+	if err := sendmail.SendEmail([]string{*email}, "Your username", msg); err != nil {
 		logger.WithError(err).Errorln("Failed to send email.")
 		return common.ErrInternalErr
 	}
@@ -1167,6 +1167,23 @@ func isAuthorizedForUser(userID, ofUserID types.UserID) (bool, error) {
 	}
 	if user.IsNetworkAdmin() {
 		return user.NetworkDomain == ofUser.NetworkDomain, nil
+	}
+	return false, nil
+}
+
+func isUserNetworkAdmin(userID types.UserID) (bool, error) {
+	var user types.User
+	if err := db.GetUser(userID, &user); err != nil {
+		return false, fmt.Errorf("failed to get user %s: %w", userID, err)
+	}
+	if optional.Bool(user.IsSysAdmin) {
+		return true, nil
+	}
+	if optional.Bool(user.IsAdminUser) {
+		return true, nil
+	}
+	if user.IsNetworkAdmin() {
+		return true, nil
 	}
 	return false, nil
 }
@@ -1736,4 +1753,183 @@ func (h *handlerImpl) SetNetworkDomain(auth interface{}, requestObject api.SetNe
 	}
 
 	return nil
+}
+
+func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequestObject) (string, error) {
+	token, namespace, userID, logger := h.parseToken(auth, "invite-user", "Invite user")
+	if token == nil {
+		logger.Warnln("nil token")
+		return "", common.ErrModelUnauthorized
+	}
+	var user types.User
+	err := db.GetUser(userID, &user)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		return "", common.ErrInternalErr
+	}
+	if !(user.IsNetworkAdmin()) {
+		logger.Warnln("Non-admin user trying to invite user.")
+		return "", common.ErrModelUnauthorized
+	}
+	if namespace == "" {
+		namespace = utils.DefaultNamespace
+	}
+	networkDomain := user.NetworkDomain
+	if networkDomain == nil || *networkDomain == "" {
+		networkDomain = &user.TenantConfig.NetworkDomain
+	}
+	logger = logger.WithField(ulog.Namespace, namespace)
+	params := request.Body
+	code := utils.NewStateToken(12)
+	err = db.CreateUserInvite(&models.UserInvite{
+		Namespace:     namespace,
+		Emails:        params.Emails,
+		NetworkDomain: *networkDomain,
+		Code:          code,
+		InvitedBy:     *user.UserBaseInfo.ShortInfo(),
+	})
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to create user invite.")
+		return "", common.ErrInternalErr
+	}
+	if params.SendEmail {
+		var emails []string
+		for _, email := range params.Emails {
+			if email != "" {
+				emails = append(emails, string(email))
+			}
+		}
+		subject := fmt.Sprintf("%s invited to join Cylonix", user.UserBaseInfo.DisplayName)
+		body := fmt.Sprintf(`
+<p>Hello,</p>
+<h3 style="margin: 20px; text-align: center">
+	You are invited to join a Cylonix network.
+</h3>
+
+<p style="margin: 20px; text-align: center">
+	%s has invited you to join Cylonix. You can use Cylonix to securely share
+	devices and services.
+</p>
+
+<p style="margin: 20px; text-align: center">
+	Please click the link below to accept the invitation.
+	Then sign in with your preferred identity provider,
+	and install Cylonix on your device to join the Cylonix network.
+</p>
+
+<p style="margin: 20px; text-align: center">
+	<a href="https://manage.cylonix.io/invite?code=%s" target="_blank">
+		Join Cylonix Network
+	</a>
+</p>
+
+<p style="margin: 20px; text-align: center; font-size: 80%%">
+	Need help getting started? Checkout our documentation at
+	<a href="https://cylonix.io" target="_blank">Cylonix.io</a>,
+	or reply to this email to talk to our support team.
+</p>
+
+<p>Best regards,</p>
+<p>Cylonix Team</p>
+<br></br>
+
+<p style="font-size: 80%%; font-weight: lighter">
+	Does this email look suspicious or you don't recognize
+	the sender? Report abuse by emailing to contact@cylonix.io
+</p>
+`,
+			user.UserBaseInfo.DisplayName,
+			code,
+		)
+		if err := sendmail.SendEmail(emails, subject, body); err != nil {
+			logger.WithError(err).Errorln("Failed to send user invite email.")
+			return "", common.ErrInternalErr
+		}
+	}
+	return code, nil
+}
+
+func (h *handlerImpl) DeleteUserInvite(auth interface{}, request api.DeleteUserInviteRequestObject) error {
+	token, namespace, userID, logger := h.parseToken(auth, "delete-user-invite", "Delete user invite")
+	if token == nil {
+		logger.Warnln("nil token")
+		return common.ErrModelUnauthorized
+	}
+	var user types.User
+	err := db.GetUser(userID, &user)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		return common.ErrInternalErr
+	}
+	if !(user.IsNetworkAdmin()) {
+		logger.Warnln("Non-admin user trying to delete user invite.")
+		return common.ErrModelUnauthorized
+	}
+	if namespace == "" {
+		namespace = utils.DefaultNamespace
+	}
+	networkDomain := user.NetworkDomain
+	if networkDomain == nil || *networkDomain == "" {
+		networkDomain = &user.TenantConfig.NetworkDomain
+	}
+	logger = logger.WithField(ulog.Namespace, namespace)
+	if request.Body == nil || len(*request.Body) == 0 {
+		logger.Warnln("Empty user invite ID list.")
+		return common.NewBadParamsErr(errors.New("empty user invite ID list"))
+	}
+	idList := types.UUIDListToIDList(request.Body)
+	err = db.DeleteUserInvites(namespace, *networkDomain, idList)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to delete user invite.")
+		return common.ErrInternalErr
+	}
+	return nil
+}
+
+func (h *handlerImpl) ListUserInvite(auth interface{}, request api.GetUserInviteListRequestObject) (int, []models.UserInvite, error) {
+	token, namespace, userID, logger := h.parseToken(auth, "list-user-invite", "List user invite")
+	if token == nil {
+		logger.Warnln("nil token")
+		return 0, nil, common.ErrModelUnauthorized
+	}
+	var user types.User
+	err := db.GetUser(userID, &user)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		return 0, nil, common.ErrInternalErr
+	}
+	if !(user.IsNetworkAdmin()) {
+		logger.Warnln("Non-admin user trying to list user invite.")
+		return 0, nil, common.ErrModelUnauthorized
+	}
+	if namespace == "" {
+		namespace = utils.DefaultNamespace
+	}
+	networkDomain := user.NetworkDomain
+	if networkDomain == nil || *networkDomain == "" {
+		networkDomain = &user.TenantConfig.NetworkDomain
+	}
+	logger = logger.WithField(ulog.Namespace, namespace)
+	params := request.Params
+	total, list, err := db.ListUserInvites(
+		namespace, *networkDomain, params.FilterBy, params.FilterValue,
+		params.SortBy, params.SortDesc, nil,
+		params.Page, params.PageSize,
+	)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to list user invite.")
+		return 0, nil, common.ErrInternalErr
+	}
+	mList, err := types.SliceMap(list, func(v types.UserInvite) (models.UserInvite, error) {
+		m, err := v.ToModel()
+		if err != nil {
+			return models.UserInvite{}, err
+		}
+		return *m, nil
+	})
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to convert user invite to model.")
+		return 0, nil, common.ErrInternalErr
+	}
+	return total, mList, nil
 }

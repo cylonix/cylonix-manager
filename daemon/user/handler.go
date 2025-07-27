@@ -63,6 +63,9 @@ type serviceHandler interface {
 	IsUsernameAvailable(params api.CheckUsernameRequestObject) (bool, error)
 	UserIDToken(params api.GetIDTokenRequestObject) (*models.UserIDToken, error)
 	GetUserRoles(auth interface{}, params api.GetUserRolesRequestObject) ([]models.Role, error)
+	InviteUser(auth interface{}, requestObject api.InviteUserRequestObject) (string, error)
+	DeleteUserInvite(auth interface{}, requestObject api.DeleteUserInviteRequestObject) error
+	ListUserInvite(auth interface{}, requestObject api.GetUserInviteListRequestObject) (int, []models.UserInvite, error)
 }
 
 type friendHandler interface {
@@ -137,6 +140,9 @@ func (s *UserService) Register(d *api.StrictServer) error {
 	d.CheckUsernameHandler = s.checkUsername
 	d.GetIDTokenHandler = s.userIDToken
 	d.GetUserRolesHandler = s.getUserRoles
+	d.InviteUserHandler = s.inviteUser
+	d.DeleteUserInviteHandler = s.deleteUserInvite
+	d.GetUserInviteListHandler = s.listUserInvite
 
 	return nil
 }
@@ -719,6 +725,60 @@ func (s *UserService) deleteFriendRequest(ctx context.Context, requestObject api
 		return api.DeleteFriendRequests401Response{}, nil
 	}
 	return api.DeleteFriendRequests400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
+func (s *UserService) inviteUser(ctx context.Context, requestObject api.InviteUserRequestObject) (api.InviteUserResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	link, err := s.handler.InviteUser(auth, requestObject)
+	if err == nil {
+		return api.InviteUser200TextResponse(link), nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.InviteUser500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.InviteUser401Response{}, nil
+	}
+	return api.InviteUser400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
+func (s *UserService) deleteUserInvite(ctx context.Context, requestObject api.DeleteUserInviteRequestObject) (api.DeleteUserInviteResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	err := s.handler.DeleteUserInvite(auth, requestObject)
+	if err == nil {
+		return api.DeleteUserInvite200TextResponse(""), nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.DeleteUserInvite500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.DeleteUserInvite401Response{}, nil
+	}
+	return api.DeleteUserInvite400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
+func (s *UserService) listUserInvite(ctx context.Context, requestObject api.GetUserInviteListRequestObject) (api.GetUserInviteListResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	total, list, err := s.handler.ListUserInvite(auth, requestObject)
+	if err == nil {
+		return api.GetUserInviteList200JSONResponse{
+			Total: total,
+			Items: &list,
+		}, nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.GetUserInviteList500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.GetUserInviteList401Response{}, nil
+	}
+	return api.GetUserInviteList400JSONResponse{
 		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
 	}, nil
 }
