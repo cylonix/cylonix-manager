@@ -98,6 +98,7 @@ func createHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 		Name:      userInfo.UserID.String(),
 		LoginName: &userInfo.LoginName,
 		Namespace: &userInfo.Namespace,
+		Network:   &userInfo.Network,
 	}
 	client := getHsClient()
 	ctx, cancel := newHsClientContext()
@@ -121,6 +122,21 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 	response, err := client.GetUser(ctx, request)
 	user := &hstypes.User{}
 	if err == nil {
+		if response.User != nil && response.User.Network != userInfo.Network {
+			logger.WithFields(logrus.Fields{
+				"namespace": userInfo.Namespace,
+				"user-id":   userInfo.UserID,
+				"network":   userInfo.Network,
+			}).Infoln("mismatched user network domain. Update for now")
+			_, err = client.UpdateUserNetworkDomain(ctx, &v1.UpdateUserNetworkDomainRequest{
+				User:      userInfo.UserID.String(),
+				Namespace: userInfo.Namespace,
+				Network:   userInfo.Network,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to update user network domain: %w", err)
+			}
+		}
 		err = user.FromProto(response.User)
 	}
 	if err != nil && strings.Contains(err.Error(), hsdb.ErrUserNotFound.Error()) {

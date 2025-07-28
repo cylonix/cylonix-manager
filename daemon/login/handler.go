@@ -95,6 +95,14 @@ func loginSuccessToJSONResponse(s *models.LoginSuccess) api.LoginSuccessJSONResp
 	}
 }
 
+func seeOtherJSONResponse(url string) api.SeeOtherJSONResponse {
+	return api.SeeOtherJSONResponse{
+		Headers: api.SeeOtherResponseHeaders{
+			Location: url,
+		},
+	}
+}
+
 func (l *LoginService) addLogin(ctx context.Context, requestObject api.AddLoginRequestObject) (api.AddLoginResponseObject, error) {
 	auth := ctx.Value(api.SecurityAuthContextKey)
 	err := l.handler.AddLogin(auth, requestObject)
@@ -225,13 +233,20 @@ func (l *LoginService) oauthCallback(ctx context.Context, requestObject api.Oaut
 		}, nil
 	}
 	if errors.Is(err, common.ErrInternalErr) {
-		return api.OauthCallback500JSONResponse{}, nil
+		url := utils.UserLoginErrorURL("Internal error, please try again later or contact support.")
+		return api.OauthCallback303JSONResponse{
+			SeeOtherJSONResponse: seeOtherJSONResponse(url),
+		}, nil
 	}
 	if errors.Is(err, common.ErrModelUnauthorized) {
-		return api.OauthCallback401Response{}, nil
+		url := utils.UserLoginErrorURL("Unauthorized. If you believe this is an error, please contact support.")
+		return api.OauthCallback303JSONResponse{
+			SeeOtherJSONResponse: seeOtherJSONResponse(url),
+		}, nil
 	}
-	return api.OauthCallback400JSONResponse{
-		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	url := utils.UserLoginErrorURL(err.Error())
+	return api.OauthCallback303JSONResponse{
+		SeeOtherJSONResponse: seeOtherJSONResponse(url),
 	}, nil
 }
 
@@ -265,13 +280,20 @@ func (l *LoginService) oauthCallbackPost(ctx context.Context, requestObject api.
 		}, nil
 	}
 	if errors.Is(err, common.ErrInternalErr) {
-		return api.OauthCallbackPost500JSONResponse{}, nil
+		url := utils.UserLoginErrorURL("Internal error, please try again later or contact support.")
+		return api.OauthCallbackPost303JSONResponse{
+			SeeOtherJSONResponse: seeOtherJSONResponse(url),
+		}, nil
 	}
 	if errors.Is(err, common.ErrModelUnauthorized) {
-		return api.OauthCallbackPost401Response{}, nil
+		url := utils.UserLoginErrorURL("Unauthorized. If you believe this is an error, please contact support.")
+		return api.OauthCallbackPost303JSONResponse{
+			SeeOtherJSONResponse: seeOtherJSONResponse(url),
+		}, nil
 	}
-	return api.OauthCallbackPost400JSONResponse{
-		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	url := utils.UserLoginErrorURL(err.Error())
+	return api.OauthCallbackPost303JSONResponse{
+		SeeOtherJSONResponse: seeOtherJSONResponse(url),
 	}, nil
 }
 

@@ -183,7 +183,7 @@ func (h *handlerImpl) addUserLoginIfNotExists(login *types.UserLogin, approverID
 		if !errors.Is(err, db.ErrUserLoginExists) {
 			return err
 		}
-		existing, err := db.GetUserLoginByLoginNameFast(namespace, loginName)
+		existing, err := db.GetUserLoginByLoginName(namespace, loginName)
 		if err != nil {
 			return err
 		}
@@ -835,7 +835,7 @@ func (h *handlerImpl) setUsernamePassword(namespace string, username string, pas
 		return common.ErrModelPasswordPolicyNotMet
 	}
 
-	login, err := db.GetUserLoginByLoginNameFast(namespace, loginName)
+	login, err := db.GetUserLoginByLoginName(namespace, loginName)
 	if err != nil {
 		if errors.Is(err, db.ErrUserLoginNotExists) {
 			logger.WithError(err).Warnln("Failed to get user login.")
@@ -1171,23 +1171,6 @@ func isAuthorizedForUser(userID, ofUserID types.UserID) (bool, error) {
 	return false, nil
 }
 
-func isUserNetworkAdmin(userID types.UserID) (bool, error) {
-	var user types.User
-	if err := db.GetUser(userID, &user); err != nil {
-		return false, fmt.Errorf("failed to get user %s: %w", userID, err)
-	}
-	if optional.Bool(user.IsSysAdmin) {
-		return true, nil
-	}
-	if optional.Bool(user.IsAdminUser) {
-		return true, nil
-	}
-	if user.IsNetworkAdmin() {
-		return true, nil
-	}
-	return false, nil
-}
-
 func getNetworkDomainOfAdmin(userID types.UserID) (*string, error) {
 	var (
 		user types.User
@@ -1442,7 +1425,7 @@ func profileImgParamsUserID(namespace string, userIDStr, username *string, logge
 		}
 		return &id, nil
 	} else if username != nil && *username != "" {
-		l, err := db.GetUserLoginByLoginNameFast(namespace, *username)
+		l, err := db.GetUserLoginByLoginName(namespace, *username)
 		if err != nil {
 			if errors.Is(err, db.ErrUserLoginNotExists) {
 				return nil, common.ErrModelUserNotExists
@@ -1787,6 +1770,7 @@ func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequest
 		NetworkDomain: *networkDomain,
 		Code:          code,
 		InvitedBy:     *user.UserBaseInfo.ShortInfo(),
+		Role:          string(params.Role),
 	})
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to create user invite.")
@@ -1799,54 +1783,18 @@ func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequest
 				emails = append(emails, string(email))
 			}
 		}
-		subject := fmt.Sprintf("%s invited to join Cylonix", user.UserBaseInfo.DisplayName)
-		body := fmt.Sprintf(`
-<p>Hello,</p>
-<h3 style="margin: 20px; text-align: center">
-	You are invited to join a Cylonix network.
-</h3>
-
-<p style="margin: 20px; text-align: center">
-	%s has invited you to join Cylonix. You can use Cylonix to securely share
-	devices and services.
-</p>
-
-<p style="margin: 20px; text-align: center">
-	Please click the link below to accept the invitation.
-	Then sign in with your preferred identity provider,
-	and install Cylonix on your device to join the Cylonix network.
-</p>
-
-<p style="margin: 20px; text-align: center">
-	<a href="https://manage.cylonix.io/invite?code=%s" target="_blank">
-		Join Cylonix Network
-	</a>
-</p>
-
-<p style="margin: 20px; text-align: center; font-size: 80%%">
-	Need help getting started? Checkout our documentation at
-	<a href="https://cylonix.io" target="_blank">Cylonix.io</a>,
-	or reply to this email to talk to our support team.
-</p>
-
-<p>Best regards,</p>
-<p>Cylonix Team</p>
-<br></br>
-
-<p style="font-size: 80%%; font-weight: lighter">
-	Does this email look suspicious or you don't recognize
-	the sender? Report abuse by emailing to contact@cylonix.io
-</p>
-`,
+		subject := inviteEmailSubject(user.UserBaseInfo.DisplayName, params.InternalUser)
+		body := inviteEmailBody(
 			user.UserBaseInfo.DisplayName,
 			code,
+			params.InternalUser,
 		)
 		if err := sendmail.SendEmail(emails, subject, body); err != nil {
 			logger.WithError(err).Errorln("Failed to send user invite email.")
 			return "", common.ErrInternalErr
 		}
 	}
-	return code, nil
+	return inviteLink(code), nil
 }
 
 func (h *handlerImpl) DeleteUserInvite(auth interface{}, request api.DeleteUserInviteRequestObject) error {
@@ -1855,30 +1803,39 @@ func (h *handlerImpl) DeleteUserInvite(auth interface{}, request api.DeleteUserI
 		logger.Warnln("nil token")
 		return common.ErrModelUnauthorized
 	}
-	var user types.User
-	err := db.GetUser(userID, &user)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to get user from db.")
-		return common.ErrInternalErr
+	var (
+		ofNamespace   *string
+		networkDomain *string
+	)
+	if !token.IsSysAdmin {
+		ofNamespace = &namespace
+		if !token.IsAdminUser {
+			var user types.User
+			err := db.GetUser(userID, &user)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user from db.")
+				return common.ErrInternalErr
+			}
+			if !(user.IsNetworkAdmin()) {
+				logger.Warnln("Non-admin user trying to delete user invite.")
+				return common.ErrModelUnauthorized
+			}
+			networkDomain = user.NetworkDomain
+			if networkDomain == nil || *networkDomain == "" {
+				networkDomain = &user.TenantConfig.NetworkDomain
+			}
+		}
 	}
-	if !(user.IsNetworkAdmin()) {
-		logger.Warnln("Non-admin user trying to delete user invite.")
-		return common.ErrModelUnauthorized
-	}
-	if namespace == "" {
-		namespace = utils.DefaultNamespace
-	}
-	networkDomain := user.NetworkDomain
-	if networkDomain == nil || *networkDomain == "" {
-		networkDomain = &user.TenantConfig.NetworkDomain
-	}
-	logger = logger.WithField(ulog.Namespace, namespace)
+	logger = logger.WithFields(logrus.Fields{
+		ulog.Namespace:   optional.String(ofNamespace),
+		"network-domain": optional.String(networkDomain),
+	})
 	if request.Body == nil || len(*request.Body) == 0 {
 		logger.Warnln("Empty user invite ID list.")
 		return common.NewBadParamsErr(errors.New("empty user invite ID list"))
 	}
 	idList := types.UUIDListToIDList(request.Body)
-	err = db.DeleteUserInvites(namespace, *networkDomain, idList)
+	err := db.DeleteUserInvites(ofNamespace, networkDomain, idList)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to delete user invite.")
 		return common.ErrInternalErr
@@ -1892,27 +1849,42 @@ func (h *handlerImpl) ListUserInvite(auth interface{}, request api.GetUserInvite
 		logger.Warnln("nil token")
 		return 0, nil, common.ErrModelUnauthorized
 	}
-	var user types.User
-	err := db.GetUser(userID, &user)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to get user from db.")
-		return 0, nil, common.ErrInternalErr
+	ofNamespace := request.Params.Namespace
+	var networkDomain *string
+	if !token.IsSysAdmin {
+		if ofNamespace == nil || *ofNamespace == "" {
+			ofNamespace = &namespace
+		} else if *ofNamespace != namespace {
+			logger.
+				WithField(ulog.Namespace, *ofNamespace).
+				Warnln("Non-sysadmin user trying to list user invite of other namespace.")
+			return 0, nil, common.ErrModelUnauthorized
+		}
+		if !token.IsAdminUser {
+			var user types.User
+			err := db.GetUser(userID, &user)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user from db.")
+				return 0, nil, common.ErrInternalErr
+			}
+			if !(user.IsNetworkAdmin()) {
+				logger.Warnln("Non-admin user trying to list user invite.")
+				return 0, nil, common.ErrModelUnauthorized
+			}
+			networkDomain = user.NetworkDomain
+			if networkDomain == nil || *networkDomain == "" {
+				networkDomain = &user.TenantConfig.NetworkDomain
+			}
+		}
 	}
-	if !(user.IsNetworkAdmin()) {
-		logger.Warnln("Non-admin user trying to list user invite.")
-		return 0, nil, common.ErrModelUnauthorized
-	}
-	if namespace == "" {
-		namespace = utils.DefaultNamespace
-	}
-	networkDomain := user.NetworkDomain
-	if networkDomain == nil || *networkDomain == "" {
-		networkDomain = &user.TenantConfig.NetworkDomain
-	}
-	logger = logger.WithField(ulog.Namespace, namespace)
+	logger = logger.WithFields(logrus.Fields{
+		ulog.Namespace:   optional.String(ofNamespace),
+		"network-domain": optional.String(networkDomain),
+	})
+
 	params := request.Params
 	total, list, err := db.ListUserInvites(
-		namespace, *networkDomain, params.FilterBy, params.FilterValue,
+		ofNamespace, networkDomain, params.FilterBy, params.FilterValue,
 		params.SortBy, params.SortDesc, nil,
 		params.Page, params.PageSize,
 	)
@@ -1920,16 +1892,8 @@ func (h *handlerImpl) ListUserInvite(auth interface{}, request api.GetUserInvite
 		logger.WithError(err).Errorln("Failed to list user invite.")
 		return 0, nil, common.ErrInternalErr
 	}
-	mList, err := types.SliceMap(list, func(v types.UserInvite) (models.UserInvite, error) {
-		m, err := v.ToModel()
-		if err != nil {
-			return models.UserInvite{}, err
-		}
-		return *m, nil
+	mList, _ := types.SliceMap(list, func(v types.UserInvite) (models.UserInvite, error) {
+		return *v.ToModel(), nil
 	})
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to convert user invite to model.")
-		return 0, nil, common.ErrInternalErr
-	}
 	return total, mList, nil
 }

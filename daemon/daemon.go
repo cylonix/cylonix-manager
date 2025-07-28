@@ -388,7 +388,7 @@ func (d *Daemon) Run() error {
 
 func (d *Daemon) initSysAdmin() error {
 	namespace, username, password, email, firstName, lastName := utils.GetCylonixAdminInfo()
-	login, err := db.GetUserLoginByLoginNameFast("", username)
+	login, err := db.GetUserLoginByLoginName("", username)
 	if err != nil {
 		if !errors.Is(err, db.ErrUserLoginNotExists) {
 			return fmt.Errorf("failed to check if user login exists: %w", err)

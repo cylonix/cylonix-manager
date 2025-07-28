@@ -7,7 +7,6 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/pkg/optional"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -387,23 +386,18 @@ type UserInvite struct {
 	NetworkDomain string
 	Code          string       `gorm:"uniqueIndex"`
 	InvitedByID   UserID       `gorm:"type:uuid"`
-	InvitedBy     UserBaseInfo `gorm:"constraint:OnDelete:SET NULL;"`
+	InvitedBy     UserBaseInfo
 	Emails        string
 	Role          string
 }
 
-func (ui *UserInvite) ToModel() (*models.UserInvite, error) {
+func (ui *UserInvite) ToModel() *models.UserInvite {
 	if ui == nil {
-		return nil, nil
+		return nil
 	}
-	emails, err := SliceMap(strings.Split(ui.Emails, ","), func(s string) (types.Email, error) {
-		var email types.Email
-		err := email.UnmarshalJSON([]byte(s))
-		return email, err
+	emails, _ := SliceMap(strings.Split(ui.Emails, ","), func(s string) (types.Email, error) {
+		return types.Email(s), nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse emails (%v): %w", ui.Emails, err)
-	}
 	return &models.UserInvite{
 		ID:            ui.ID.UUID(),
 		Namespace:     ui.Namespace,
@@ -413,7 +407,7 @@ func (ui *UserInvite) ToModel() (*models.UserInvite, error) {
 		Emails:        emails,
 		Role:          ui.Role,
 		CreatedAt:     ui.CreatedAt.Unix(),
-	}, nil
+	}
 }
 
 func (ui *UserInvite) FromModel(m *models.UserInvite) *UserInvite {

@@ -137,7 +137,7 @@ func TestLoginDB(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Delete non existing login with user ID check should generate error.
-	_, err = GetUserLoginByLoginNameFast(namespace, loginName)
+	_, err = GetUserLoginByLoginName(namespace, loginName)
 	assert.ErrorIs(t, err, ErrUserLoginNotExists)
 	err = DeleteUserLoginCheckUserID(namespace, userID, loginName)
 	assert.ErrorIs(t, err, ErrUserLoginNotExists)

@@ -111,7 +111,7 @@ func TestUser(t *testing.T) {
 
 		err = handler.PostUser(adminToken, userPostParam)
 		assert.Nil(t, err)
-		login, err := db.GetUserLoginByLoginNameFast(namespace, username)
+		login, err := db.GetUserLoginByLoginName(namespace, username)
 		if assert.Nil(t, err) && assert.NotNil(t, login) {
 			assert.Equal(t, username, login.LoginName)
 			defer db.DeleteUser(namespace, login.UserID)

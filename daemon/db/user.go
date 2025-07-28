@@ -89,7 +89,7 @@ func SearchUser(namespace string, username, email, phone *string) (*types.User, 
 		return nil, err
 	}
 	if username != nil {
-		login, err := GetUserLoginByLoginNameFast(namespace, *username)
+		login, err := GetUserLoginByLoginName(namespace, *username)
 		if err != nil {
 			return nil, err
 		}
@@ -228,7 +228,7 @@ func GetUserIDsWithLabelIDs(labelIDs []string) ([]uint, error) {
 	return userIDs, nil
 }
 func GetUserByLoginName(namespace, loginName string) (*types.User, error) {
-	userLogin, err := GetUserLoginByLoginNameFast(namespace, loginName)
+	userLogin, err := GetUserLoginByLoginName(namespace, loginName)
 	if err != nil {
 		return nil, err
 	}

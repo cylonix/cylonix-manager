@@ -312,15 +312,11 @@ func (s *oauthSession) setOauthUser() error {
 // new user login and a new user.
 func (s *oauthSession) setUser() (*models.ApprovalState, error) {
 	namespace := s.namespace
-	login, err := oauthUserToUserLogin(namespace, s.oauthUser, s.password)
-	if err != nil {
-		s.logger.WithError(err).Debugln("Failed to convert to user login")
-		return nil, err
-	}
 	networkDomain := s.state.NetworkDomain
 	invitationCode := s.state.InviteCode
 	ou := s.oauthUser
 	roles := ou.Roles
+	// Set namespace, network domain and roles from invitation if provided.
 	if invitationCode != "" {
 		invite, err := db.GetUserInviteByCode(invitationCode)
 		if err != nil {
@@ -337,9 +333,16 @@ func (s *oauthSession) setUser() (*models.ApprovalState, error) {
 			return nil, db.ErrUserInviteNotExists
 		}
 		networkDomain = invite.NetworkDomain
+		namespace = invite.Namespace
 		if invite.Role != "" {
 			roles = append(roles, invite.Role)
 		}
+	}
+
+	login, err := oauthUserToUserLogin(namespace, s.oauthUser, s.password)
+	if err != nil {
+		s.logger.WithError(err).Debugln("Failed to convert to user login")
+		return nil, err
 	}
 
 	loginUser, user, state, err := getUser(

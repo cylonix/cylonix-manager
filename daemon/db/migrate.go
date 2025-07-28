@@ -124,12 +124,13 @@ var (
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
 		{
-			ID: "202507261900",
+			ID: "202507270900",
 			Migrate: func(tx *gorm.DB) error {
 				log.Printf(`
 					Migrating to add user invite support.
 				`)
 				return tx.AutoMigrate(
+					&types.UserBaseInfo{},
 					&types.UserInvite{},
 					&utils.OauthStateTokenData{},
 				)

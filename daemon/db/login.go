@@ -309,7 +309,7 @@ func CreateUserLogin(loginUser *types.UserLogin) error {
 		return err
 	}
 	namespace, userID, loginName := l.Namespace, l.UserID, l.LoginName
-	_, err = GetUserLoginByLoginNameFast(namespace, loginName)
+	_, err = GetUserLoginByLoginName(namespace, loginName)
 	if err == nil {
 		return ErrUserLoginExists
 	}
@@ -422,7 +422,7 @@ func DeleteUserLoginByUserID(namespace string, userID types.UserID) error {
 	return tx.Commit().Error
 }
 func DeleteUserLoginCheckUserID(namespace string, userID types.UserID, loginName string) error {
-	loginInfo, err := GetUserLoginByLoginNameFast(namespace, loginName)
+	loginInfo, err := GetUserLoginByLoginName(namespace, loginName)
 	if err != nil {
 		return err
 	}
@@ -452,25 +452,11 @@ func GetUserEmailOrPhone(namespace string, userID types.UserID, phone bool) (*st
 func GetUserLoginFast(namespace string, loginID types.LoginID) (*types.UserLogin, error) {
 	return getUserLoginFast(namespace, loginID, false /* with fallback */)
 }
-func GetUserLoginByLoginNameFast(namespace, loginName string) (*types.UserLogin, error) {
+func GetUserLoginByLoginName(namespace, loginName string) (*types.UserLogin, error) {
 	ret := &types.UserLogin{}
-	var err error
-	if namespace == "" {
-		err = getUserLoginByLoginName(namespace, loginName, ret)
-	} else {
-		err = getDataFromCache(
-			namespace, userLoginCacheByLoginNamePath, nil, &loginName, ret,
-			func(namespace string, _ *types.UserID, loginName *string, result interface{}) error {
-				if loginName == nil {
-					return errors.New("nil login name")
-				}
-				return getUserLoginByLoginName(namespace, *loginName, result)
-			},
-		);
-	}
-
+	err := getUserLoginByLoginName(namespace, loginName, ret)
 	if err != nil {
-		if errors.Is(err, errCacheNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserLoginNotExists
 		}
 		return nil, err

@@ -253,7 +253,7 @@ func TestTenant(t *testing.T) {
 	deleteConfigParam := api.DeleteTenantConfigsRequestObject{
 		Body: &[]uuid.UUID{tenantID},
 	}
-	login, err := db.GetUserLoginByLoginNameFast(namespace, list[0].Email)
+	login, err := db.GetUserLoginByLoginName(namespace, list[0].Email)
 	assert.Nil(t, err)
 	if assert.NotNil(t, login) {
 		assert.Nil(t, db.DeleteUser(namespace, login.UserID))

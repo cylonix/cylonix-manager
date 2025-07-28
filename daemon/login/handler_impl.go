@@ -97,7 +97,7 @@ func (h *handlerImpl) AddLogin(auth interface{}, requestObject api.AddLoginReque
 	}
 	login := requestObject.Body
 	logger = logger.WithField("login", login.Login).WithField("login-type", login.LoginType)
-	l, err := db.GetUserLoginByLoginNameFast(namespace, login.Login)
+	l, err := db.GetUserLoginByLoginName(namespace, login.Login)
 	if err == nil {
 		err = common.ErrModelUserLoginExists
 		if l.UserID == userID {
@@ -334,7 +334,7 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 			params.Provider = &provider
 			logger.WithField("provider", provider).Debugln("Provider detected from email domain")
 		} else {
-			login, err := db.GetUserLoginByLoginNameFast(namespace, email)
+			login, err := db.GetUserLoginByLoginName(namespace, email)
 			if err != nil {
 				if errors.Is(err, db.ErrUserLoginNotExists) {
 					logger.WithError(err).Debugln("Login not exists.")
@@ -416,7 +416,7 @@ func (h *handlerImpl) passwordLogin(
 		ulog.WgName:    wgName,
 	})
 
-	login, err := db.GetUserLoginByLoginNameFast(namespace, username)
+	login, err := db.GetUserLoginByLoginName(namespace, username)
 	if err != nil {
 		if errors.Is(err, db.ErrUserLoginNotExists) {
 			return nil, nil, nil, nil, common.ErrModelUnauthorized

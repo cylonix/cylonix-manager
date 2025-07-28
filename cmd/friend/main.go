@@ -69,7 +69,7 @@ func checkParams(key *string, descript string) bool {
 	return true
 }
 func getUserID(namespace, username string) (types.UserID, error) {
-	rst, err := db.GetUserLoginByLoginNameFast(namespace, username)
+	rst, err := db.GetUserLoginByLoginName(namespace, username)
 	if err != nil {
 		fmt.Println("user not exists : username " + username + " error: " + err.Error())
 		return types.NilID, err

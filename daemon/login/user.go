@@ -21,9 +21,11 @@ const (
 	maxNetworkDomainRetries = 5
 )
 
-func newUserApproval(login *types.UserLogin) *models.UserApprovalInfo {
+func newUserApproval(login *types.UserLogin, roles []string) *models.UserApprovalInfo {
 	return &models.UserApprovalInfo{
-		Login: *login.ToModel(),
+		Namespace: login.Namespace,
+		Login:     *login.ToModel(),
+		Roles:     &roles,
 		ApprovalRecord: &models.ApprovalRecord{
 			State: models.ApprovalStatePending,
 		},
@@ -41,7 +43,7 @@ func getUser(
 	logger *logrus.Entry,
 ) (loginUser *types.UserLogin, user *types.User, state *types.ApprovalState, err error) {
 	namespace := login.Namespace
-	loginUser, err = db.GetUserLoginByLoginNameFast(namespace, login.LoginName)
+	loginUser, err = db.GetUserLoginByLoginName(namespace, login.LoginName)
 	if err == nil {
 		user, err = db.GetUserFast(namespace, loginUser.UserID, true)
 		if err != nil {
@@ -74,7 +76,7 @@ func getUser(
 			return
 		}
 		if !exists {
-			userRegisterInfo := newUserApproval(login)
+			userRegisterInfo := newUserApproval(login, roles)
 			if _, err = db.NewUserApproval(userRegisterInfo, types.NilID, "", ""); err != nil {
 				return nil, nil, nil, fmt.Errorf("failed to add user approval: %w", err)
 			}
