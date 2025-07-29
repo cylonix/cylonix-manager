@@ -526,7 +526,7 @@ func getProviderFromEmail(email string) string {
 	return getProviderFromDomain(domain)
 }
 
-func oauthPasswordLogin(providerType, userType, namespace, username, password string, redirectURL *string, logger *logrus.Entry) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
+func OauthPasswordLogin(providerType, userType, namespace, username, password string, redirectURL *string, logger *logrus.Entry) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error) {
 	session, err := newOauthPasswordLoginSession(providerType, userType, namespace, username, password, logger)
 	session.redirectURL = redirectURL
 	if err != nil {
