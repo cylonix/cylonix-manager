@@ -23,7 +23,7 @@ func TestLoginDB(t *testing.T) {
 	}
 	userID := user.ID
 	defer func() {
-		err := DeleteUser(namespace, userID)
+		err := DeleteUser(nil, namespace, userID)
 		assert.Nil(t, err)
 	}()
 

@@ -54,8 +54,8 @@ func newAddParam(namespace, name, phone string, tierID uuid.UUID) api.AddTenantC
 			AutoApproveDevice: optional.BoolP(true),
 			Name:              name,
 			Namespace:         namespace,
-			NetworkDomain:     optional.P("test.com"),
-			Email:             name + "@text.com",
+			NetworkDomain:     optional.P(namespace + "test.com"),
+			Email:             name + "@test.com",
 			Phone:             phone,
 			UserTierID:        &tierID,
 		},
@@ -256,7 +256,7 @@ func TestTenant(t *testing.T) {
 	login, err := db.GetUserLoginByLoginName(namespace, list[0].Email)
 	assert.Nil(t, err)
 	if assert.NotNil(t, login) {
-		assert.Nil(t, db.DeleteUser(namespace, login.UserID))
+		assert.Nil(t, db.DeleteUser(nil, namespace, login.UserID))
 		err = handler.DeleteConfigs(tokenData, deleteConfigParam)
 		assert.Nil(t, err)
 	}

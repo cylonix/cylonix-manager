@@ -96,6 +96,7 @@ func (u *UserBaseInfo) ShortInfo() *models.UserShortInfo {
 const (
 	NamespaceAdminRole     = "namespace-admin"
 	NetworkDomainAdminRole = "network-admin"
+	NetworkDomainOwnerRole = "network-owner"
 	SysAdminRole           = "sys-admin"
 )
 
@@ -272,6 +273,10 @@ func (u *User) FromModel(namespace string, m *models.User) *User {
 
 func (u User) IsNetworkAdmin() bool {
 	return slices.Contains(u.Roles, NetworkDomainAdminRole)
+}
+
+func (u User) IsNetworkOwner() bool {
+	return slices.Contains(u.Roles, NetworkDomainOwnerRole)
 }
 
 func (u *UserTier) ToModel() *models.UserTier {

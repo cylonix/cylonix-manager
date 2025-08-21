@@ -9,6 +9,7 @@ import (
 	"cylonix/sase/daemon/common"
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
+	"cylonix/sase/pkg/fwconfig"
 	"cylonix/sase/pkg/metrics"
 	"cylonix/sase/pkg/optional"
 	"cylonix/sase/pkg/sendmail"
@@ -29,12 +30,14 @@ import (
 )
 
 type handlerImpl struct {
-	logger *logrus.Entry
+	fwService fwconfig.ConfigService
+	logger    *logrus.Entry
 }
 
-func newHandlerImpl(logger *logrus.Entry) *handlerImpl {
+func newHandlerImpl(fwService fwconfig.ConfigService, logger *logrus.Entry) *handlerImpl {
 	return &handlerImpl{
-		logger: logger,
+		fwService: fwService,
+		logger:    logger,
 	}
 }
 
@@ -528,21 +531,35 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 		ofNamespace = namespace
 	}
 	idList := types.UUIDListToIDList(requestObject.Body)
-	for _, uID := range idList {
-		if userID != uID {
-			if !token.IsAdminUser {
-				// Only admin user can delete other user.
-				return common.ErrModelUnauthorized
-			}
-		}
-		log := logger.WithField("target-user-id", uID.String())
-		deviceIDList, err := db.GetUserDeviceIDList(ofNamespace, uID)
+	tx, err := db.BeginTransaction()
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to begin transaction.")
+		return common.ErrInternalErr
+	}
+	defer tx.Rollback()
+
+	requstor, err := db.GetUserFast(ofNamespace, userID, false)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user.")
+		return common.ErrInternalErr
+	}
+	isNetworkOwner := requstor.IsNetworkOwner()
+	ofNetwork := optional.String(requstor.NetworkDomain)
+	if isNetworkOwner {
+		userIDsOfNetwork, err := db.GetUserIDList(tx, ofNamespace, &ofNetwork)
 		if err != nil {
-			if !errors.Is(err, db.ErrDeviceNotExists) {
-				log.WithError(err).Warnln("Get user devices failed")
-				return common.ErrInternalErr
-			}
+			logger.WithError(err).Errorln("Failed to get network owner ID.")
+			return common.ErrInternalErr
 		}
+		if len(idList) == 1 && idList[0] == userID {
+			logger.Infoln("Network owner deleting self, will delete all users in the network domain.")
+			idList = userIDsOfNetwork
+		}
+	}
+	var cbList []func() error
+
+	for _, uID := range idList {
+		log := logger.WithField("target-user-id", uID.String())
 		user, err := db.GetUserFast(ofNamespace, uID, false)
 		if err != nil {
 			if errors.Is(err, db.ErrUserNotExists) {
@@ -552,6 +569,24 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 			log.WithError(err).Errorln("Get user failed")
 			return common.ErrInternalErr
 		}
+		// Network owner can delete users in the same network domain.
+		// Namespace admin can delete non-admin users in the same namespace.
+		if userID != uID {
+			network := optional.String(user.NetworkDomain)
+			if network == "" || network != ofNetwork || !isNetworkOwner {
+				if !token.IsAdminUser {
+					return common.ErrModelUnauthorized
+				}
+				if optional.Bool(user.IsAdminUser) {
+					log.Warnln("Admin user cannot be deleted.")
+					err = fmt.Errorf(
+						"admin user %s cannot be deleted (demote to non-admin user first)",
+						user.UserBaseInfo.DisplayName,
+					)
+					return common.NewBadParamsErr(err)
+				}
+			}
+		}
 		if optional.Bool(user.IsSysAdmin) {
 			log.Warnln("Sysadmin user cannot be deleted.")
 			err = fmt.Errorf(
@@ -559,28 +594,45 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 			)
 			return common.NewBadParamsErr(err)
 		}
-		if len(deviceIDList) > 0 {
-			err = fmt.Errorf(
-				"user %s has devices registered. Please delete the devices first.",
-				user.UserBaseInfo.DisplayName,
-			)
-			log.WithError(err).Warnln("Failed")
-			return common.NewBadParamsErr(err)
-		}
-		if err = db.DeleteDeviceApprovalOfUser(ofNamespace, uID, nil); err != nil {
-			if !errors.Is(err, db.ErrDeviceApprovalNotExists) {
-				log.WithError(err).Warnln("Delete device approval records failed")
+		deviceIDList, err := db.GetUserDeviceIDList(ofNamespace, uID)
+		if err != nil {
+			if !errors.Is(err, db.ErrDeviceNotExists) {
+				log.WithError(err).Warnln("Get user devices failed")
 				return common.ErrInternalErr
 			}
 		}
-		if err := db.DeleteUser(ofNamespace, uID); err != nil {
+		for _, dID := range deviceIDList {
+			cb, err := common.DeleteDeviceInAllForPG(tx, ofNamespace, uID, dID, h.fwService)
+			if err != nil {
+				log.WithError(err).Warnln("Delete device in all failed")
+				return common.ErrInternalErr
+			}
+			cbList = append(cbList, cb)
+		}
+		if err := db.DeleteUser(tx, ofNamespace, uID); err != nil {
 			if !errors.Is(err, db.ErrUserNotExists) {
 				log.WithError(err).Errorln("Delete user in all db failed")
 				return common.ErrInternalErr
 			}
 		}
-		log.Infoln("Deleted.")
+		cbList = append(cbList, func() error {
+			return vpn.DeleteHsUser(ofNamespace, optional.String(user.NetworkDomain), uID)
+		})
+		log.Infoln("Deletion scheduled.")
 	}
+	if err := tx.Commit().Error; err != nil {
+		logger.WithError(err).Errorln("Failed to commit transaction.")
+		return common.ErrInternalErr
+	}
+	hasCallbackError := false
+	for _, cb := range cbList {
+		if err := cb(); err != nil {
+			logger.WithError(err).Errorln("Failed to execute callback.")
+			hasCallbackError = true
+			// Ignore callback errors
+		}
+	}
+	logger.WithField("has-callback-error", hasCallbackError).Infoln("User deleted.")
 	return nil
 }
 

@@ -27,7 +27,7 @@ func TestDeviceDB(t *testing.T) {
 	}
 	userID := user.ID
 	defer func() {
-		assert.Nil(t, DeleteUser(namespace, userID))
+		assert.Nil(t, DeleteUser(nil, namespace, userID))
 		assert.Nil(t, DeleteTenantConfigByNamespace(namespace))
 	}()
 
@@ -35,7 +35,7 @@ func TestDeviceDB(t *testing.T) {
 		// Add devices.
 		var idList []types.DeviceID
 		defer func() {
-			assert.Nil(t, DeleteUserDevices(namespace, userID, idList))
+			assert.Nil(t, DeleteUserDevices(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 4; i++ {
 			id, err := types.NewID()
@@ -76,7 +76,7 @@ func TestDeviceDB(t *testing.T) {
 		var idList []types.DeviceID
 		var devices []*types.Device
 		defer func() {
-			assert.Nil(t, DeleteUserDevices(namespace, userID, idList))
+			assert.Nil(t, DeleteUserDevices(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 4; i++ {
 			id, err := types.NewID()
@@ -116,7 +116,7 @@ func TestDeviceDB(t *testing.T) {
 		count, err := GetUserDeviceCount(namespace, userID)
 		assert.Nil(t, err)
 		assert.Equal(t, 4, int(count))
-		err = DeleteUserDevices(namespace, userID, []types.DeviceID{device.ID})
+		err = DeleteUserDevices(nil, namespace, userID, []types.DeviceID{device.ID})
 		assert.Nil(t, err)
 		_, err = GetUserDeviceFast(namespace, userID, device.ID)
 		if assert.NotNil(t, err) {
@@ -252,7 +252,7 @@ func TestDeviceDB(t *testing.T) {
 		err = AddUserDevice(namespace, userID, &device)
 		assert.Nil(t, err)
 		defer func() {
-			assert.Nil(t, DeleteUserDevices(namespace, userID, []types.DeviceID{deviceID}))
+			assert.Nil(t, DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}))
 		}()
 		w, err := WgInfoByMachineKey(namespace, userID, machineKey)
 		assert.Nil(t, err)

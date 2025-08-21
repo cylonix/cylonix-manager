@@ -226,7 +226,7 @@ func (h *handlerImpl) PostDevice(auth interface{}, requestObject api.PostDeviceR
 		if err == nil {
 			return
 		}
-		if newErr := db.DeleteUserDevices(namespace, userID, []types.DeviceID{device.ID}); newErr != nil {
+		if newErr := db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{device.ID}); newErr != nil {
 			logger.WithError(err).Errorln("Failed to delete the failed device.")
 		}
 	}()
@@ -274,6 +274,13 @@ func (h *handlerImpl) DeleteDevices(auth interface{}, requestObject api.DeleteDe
 	if token.IsSysAdmin {
 		forNamespace = ""
 	}
+	tx, err := db.BeginTransaction()
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to begin transaction.")
+		return common.ErrInternalErr
+	}
+	defer tx.Rollback()
+	var cbList []func() error
 	for _, id := range idList {
 		log := logger.WithField(ulog.DeviceID, id)
 		device := &types.Device{}
@@ -290,14 +297,25 @@ func (h *handlerImpl) DeleteDevices(auth interface{}, requestObject api.DeleteDe
 		}
 		namespace = device.Namespace
 		if alsoDeleteApprovalRecord && device.DeviceApprovalID != nil {
-			if err := db.DeleteDeviceApproval(namespace, nil, *device.DeviceApprovalID); err != nil {
+			if err := db.DeleteDeviceApproval(tx, namespace, nil, *device.DeviceApprovalID); err != nil {
 				log.WithError(err).Errorln("delete device approval info failed")
 				return common.ErrInternalErr
 			}
 		}
-		if err := DeleteDeviceInAllForPG(namespace, device.UserID, id, h.fwService); err != nil {
+		cb, err := common.DeleteDeviceInAllForPG(tx, namespace, device.UserID, id, h.fwService)
+		if err != nil {
 			log.WithError(err).Errorln("Delete device in all database failed")
 			return common.ErrInternalErr
+		}
+		cbList = append(cbList, cb)
+	}
+	if err = tx.Commit().Error; err != nil {
+		logger.WithError(err).Errorln("Failed to commit transaction.")
+		return common.ErrInternalErr
+	}
+	for _, cb := range cbList {
+		if err := cb(); err != nil {
+			logger.WithError(err).Errorln("Failed to execute callback.")
 		}
 	}
 	return nil
@@ -365,13 +383,24 @@ func (h *handlerImpl) DeleteApprovalRecords(auth interface{}, requestObject api.
 	if !token.IsAdminUser {
 		ofUserID = &userID
 	}
+	tx, err := db.BeginTransaction()
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to begin transaction.")
+		return common.ErrInternalErr
+	}
+	defer tx.Rollback()
+
 	idList := types.UUIDListToIDList(requestObject.Body)
 	for _, id := range idList {
 		log := logger.WithField("approval-id", id.String())
-		if err := db.DeleteDeviceApproval(namespace, ofUserID, id); err != nil {
+		if err := db.DeleteDeviceApproval(tx, namespace, ofUserID, id); err != nil {
 			log.WithError(err).Errorln("Failed to delete device approval.")
 			return common.ErrInternalErr
 		}
+	}
+	if err := tx.Commit().Error; err != nil {
+		logger.WithError(err).Errorln("Failed to commit transaction.")
+		return common.ErrInternalErr
 	}
 	return nil
 }

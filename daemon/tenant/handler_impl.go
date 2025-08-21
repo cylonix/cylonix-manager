@@ -213,7 +213,6 @@ func (h *handlerImpl) AddConfig(auth interface{}, requestObject api.AddTenantCon
 		err = common.ErrInternalErr
 		return
 	}
-	userTierID := &userTier.ID
 
 	// Check if network domain is set.
 	networkDomain := optional.V(c.NetworkDomain, "")
@@ -252,7 +251,7 @@ func (h *handlerImpl) AddConfig(auth interface{}, requestObject api.AddTenantCon
 		return
 	}
 	password, err = h.handleNewlyApprovedTenant(
-		r, userTierID, networkDomain, userID, token.Username, logger,
+		r, userTier, networkDomain, userID, token.Username, logger,
 	)
 	return
 }
@@ -356,7 +355,7 @@ func (h *handlerImpl) RegisterTenant(auth interface{}, requestObject api.Registe
 
 func (h *handlerImpl) handleNewlyApprovedTenant(
 	r *types.TenantApproval,
-	tier *types.ID,
+	tier *types.UserTier,
 	networkDomain string,
 	approverID types.UserID, approverName string,
 	logger *logrus.Entry,
@@ -390,7 +389,12 @@ func (h *handlerImpl) handleNewlyApprovedTenant(
 		Namespace:  r.Namespace,
 		Email:      optional.NilIfEmptyStringP(strings.ToLower(strings.TrimSpace(optional.String(r.Email)))),
 		Phone:      optional.NilIfEmptyStringP(strings.ToLower(strings.TrimSpace(optional.String(r.Phone)))),
-		UserTierID: tier,
+		UserTierID: &tier.ID,
+		TenantSetting: types.TenantSetting{
+			MaxUser:       uint(tier.MaxUserCount),
+			MaxDevice:     uint(tier.MaxDeviceCount),
+			NetworkDomain: networkDomain,
+		},
 	}
 
 	logger.WithField("tenant", *config).Debugln("adding tenant config.")
@@ -435,6 +439,9 @@ func (h *handlerImpl) handleNewlyApprovedTenant(
 	)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to create the new admin user.")
+		if errors.Is(err, db.ErrBadParams) {
+			return "", common.NewBadParamsErr(err)
+		}
 		return "", common.ErrInternalErr
 	}
 
@@ -563,7 +570,9 @@ func (h *handlerImpl) UpdateTenantRegistration(auth interface{}, requestObject a
 		logger.WithError(err).Errorln("Failed.")
 		return "", common.NewBadParamsErr(err)
 	}
-	if _, err = db.GetUserTier(userTierID); err != nil {
+	var userTier *types.UserTier
+	userTier, err = db.GetUserTier(userTierID)
+	if err != nil {
 		if errors.Is(err, db.ErrUserTierNotExists) {
 			err = errors.New("user tier not exists")
 			logger.WithError(err).Errorln("Failed.")
@@ -612,7 +621,7 @@ func (h *handlerImpl) UpdateTenantRegistration(auth interface{}, requestObject a
 	// Handle newly approved tenant.
 	if newApproval {
 		password, err = h.handleNewlyApprovedTenant(
-			r, &userTierID, networkDomain, userID, token.Username, logger,
+			r, userTier, networkDomain, userID, token.Username, logger,
 		)
 	}
 	return

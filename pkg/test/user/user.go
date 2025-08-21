@@ -43,7 +43,7 @@ func New(namespace, username, mobile string) (*types.UserBaseInfo, error) {
 	loginSlice := []types.UserLogin{*login}
 	su, err := db.AddUser(
 		namespace, "", mobile, "", loginSlice, nil, nil,
-		optional.P(tier.Name), nil, nil,
+		optional.P(tier.Name), optional.P("test-network"), nil,
 	)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func New(namespace, username, mobile string) (*types.UserBaseInfo, error) {
 	return &su.UserBaseInfo, nil
 }
 func Delete(namespace string, userID types.UserID) error {
-	return db.DeleteUser(namespace, userID)
+	return db.DeleteUser(nil, namespace, userID)
 }
 func NewApiToken(namespace, username string, userID types.ID) (*utils.UserTokenData, error) {
 	token := utils.NewUserToken(namespace)

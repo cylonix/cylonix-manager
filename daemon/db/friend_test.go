@@ -23,13 +23,13 @@ func TestUserFriend(t *testing.T) {
 		return
 	}
 	userID := user1.ID
-	defer DeleteUser(namespace, userID)
+	defer DeleteUser(nil, namespace, userID)
 	user2, err := newMobileUserForTest(namespace, "34567", friendName)
 	if !assert.Nil(t, err) {
 		return
 	}
 	friendID := user2.ID
-	defer DeleteUser(namespace, friendID)
+	defer DeleteUser(nil, namespace, friendID)
 
 	isFriend, err := IsFriend(namespace, userID, friendID)
 	assert.Nil(t, err)
@@ -110,7 +110,7 @@ func setupFriendRequestTest(namespace string) ([]string, []types.UserID, error) 
 
 func cleanupFriendRequestTest(namespace string, ids []types.UserID) error {
 	for _, id := range ids {
-		if err := DeleteUser(namespace, id); err != nil {
+		if err := DeleteUser(nil, namespace, id); err != nil {
 			return err
 		}
 	}

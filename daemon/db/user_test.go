@@ -7,6 +7,7 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/optional"
+	"encoding/json"
 	"testing"
 
 	pw "github.com/cylonix/utils/password"
@@ -21,7 +22,11 @@ func newMobileUserForTest(namespace, mobile, displayName string) (*types.User, e
 	}
 	_, err = NewTenantForNamespace(
 		namespace, namespace, uuid.New().String(), uuid.New().String(), nil,
-		nil, &tier.ID, true /* update if exists */,
+		&types.TenantSetting{
+			MaxUser:       200,
+			MaxDevice:     1000,
+			NetworkDomain: namespace + "test.org",
+		}, &tier.ID, true /* update if exists */,
 	)
 	if err != nil {
 		return nil, err
@@ -42,7 +47,11 @@ func newUsernameLoginUserForTest(namespace, username, password, displayName, pho
 	}
 	_, err = NewTenantForNamespace(
 		namespace, namespace, uuid.New().String(), uuid.New().String(), nil,
-		nil, &tier.ID, true /* update if exists */,
+		&types.TenantSetting{
+			MaxUser:       200,
+			MaxDevice:     1000,
+			NetworkDomain: namespace + "test.org",
+		}, &tier.ID, true /* update if exists */,
 	)
 	if err != nil {
 		return nil, err
@@ -72,7 +81,7 @@ func TestUserDB(t *testing.T) {
 	}
 	userID := su.ID
 	defer func() {
-		assert.Nil(t, DeleteUser(namespace, userID))
+		assert.Nil(t, DeleteUser(nil, namespace, userID))
 		assert.Nil(t, DeleteTenantConfigByNamespace(namespace))
 	}()
 	su, err = GetUserFast(namespace, userID, false)
@@ -203,7 +212,7 @@ func TestUserDB(t *testing.T) {
 	}
 
 	// Delete.
-	err = DeleteUser(namespace, user.ID)
+	err = DeleteUser(nil, namespace, user.ID)
 	if assert.Nil(t, err) {
 		_, err := GetUserFast(namespace, user.ID, true)
 		assert.NotNil(t, err)
@@ -308,5 +317,41 @@ func TestUserBaseInfo(t *testing.T) {
 	_, err = GetUserBaseInfoFast(namespace, userID)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, ErrUserNotExists)
+	}
+}
+
+func TestUserTier(t *testing.T) {
+	namespace, username := "user_tier_test", "test-tier-username"
+	mobile, password, displayName := "1234", "123456", "Test user"
+
+	defer DeleteTenantConfigByNamespace(namespace)
+
+	user, err := newUsernameLoginUserForTest(namespace, username, password,
+		displayName, mobile)
+	if !assert.Nil(t, err) {
+		return
+	}
+	userID := user.ID
+	defer func() {
+		err := DeleteUser(nil, namespace, userID)
+		if err != nil {
+			assert.ErrorIs(t, err, ErrUserNotExists)
+		}
+	}()
+
+	// User tier cannot be deleted if there is a user refers to it.
+	if !assert.NotNil(t, DeleteUserTier(*user.UserTierID)) {
+		if assert.Nil(t, GetUser(userID, &user)) {
+			v, _ := json.Marshal(user)
+			t.Errorf("user=%v", string(v))
+		}
+	}
+
+	// Deleting user shouldn't delete the user tier or set is content to NULL.
+	assert.Nil(t, DeleteUser(nil, namespace, userID))
+	tier, err := GetUserTier(*user.UserTierID)
+	if assert.Nil(t, err) && assert.NotNil(t, tier) {
+		assert.NotZero(t, tier.MaxUserCount)
+		assert.NotZero(t, tier.MaxDeviceCount)
 	}
 }

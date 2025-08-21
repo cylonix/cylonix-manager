@@ -70,13 +70,11 @@ fw-api:
 force:;
 
 test:
-	go test ./daemon/... -cover -count=1
-	go test ./pkg/hua/... -cover -count=1
-	go test ./pkg/resources/... -cover -count=1
-	rm ./daemon/test.db ./daemon/database/test.db ./pkg/hua/test.db
+	go test ./... -cover -count=1
+	rm -f ./*/test.db ./*/*/test.db
 
 .PHONY: alpine docker
-RELEASE?=v1.0.1
+RELEASE?=v1.0.2
 VERSION:=$(shell git describe --tags --exact-match 2> /dev/null || \
 				git rev-parse --short HEAD || echo "unknown")
 REVISION:=$(shell git rev-parse HEAD)

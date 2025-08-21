@@ -10,7 +10,6 @@ import (
 	"cylonix/sase/daemon/common"
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
-	"cylonix/sase/daemon/device"
 	"cylonix/sase/pkg/fwconfig"
 	"cylonix/sase/pkg/interfaces"
 	"cylonix/sase/pkg/logging/logfields"
@@ -334,11 +333,6 @@ func (s *VpnService) DerperServers(namespace string) (*map[int]*tailcfg.DERPRegi
 	return &cfg.Servers, nil
 }
 
-// handler for Vpn module to delete device in wg/fw/database/vpn
-func (s *VpnService) DeleteEntry(namespace string, userID types.UserID, deviceID types.DeviceID) error {
-	return device.DeleteDeviceInAllForPG(namespace, userID, deviceID, s.fwService)
-}
-
 func (s *VpnService) IsGatewaySupported(namespace string, userID types.UserID, deviceID types.DeviceID) bool {
 	return common.IsGatewaySupported(namespace, userID, deviceID)
 }
@@ -542,7 +536,7 @@ func (s *VpnService) NewDevice(
 	failed := false
 	defer func() {
 		if failed {
-			if err := db.DeleteUserDevices(namespace, userID, []types.DeviceID{deviceID}); err != nil {
+			if err := db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}); err != nil {
 				log.WithError(err).Errorln("Failed to roll back the new device added.")
 			}
 		}

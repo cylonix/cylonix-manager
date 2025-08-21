@@ -17,7 +17,7 @@ func New(namespace string, userID types.UserID, ip string) (*types.Device, error
 }
 
 func Delete(namespace string, userID types.UserID, deviceID types.DeviceID) error {
-	return db.DeleteUserDevices(namespace, userID, []types.DeviceID{deviceID})
+	return db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID})
 }
 
 func NewDeviceApprovalForTest(namespace, username string, userID types.UserID) (*types.DeviceApproval, error) {

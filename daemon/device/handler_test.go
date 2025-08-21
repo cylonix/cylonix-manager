@@ -77,7 +77,7 @@ func TestDeviceApprovalHandlers(t *testing.T) {
 	}
 	userID := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, userID))
+		assert.Nil(t, db.DeleteUser(nil, namespace, userID))
 	}()
 
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
@@ -90,7 +90,7 @@ func TestDeviceApprovalHandlers(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		var idList []types.DeviceApprovalID
 		defer func() {
-			assert.Nil(t, db.DeleteDeviceApprovalOfUser(namespace, userID, idList))
+			assert.Nil(t, db.DeleteDeviceApprovalOfUser(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 30; i++ {
 			approval, err := devt.NewDeviceApprovalForTest(namespace, username, userID)
@@ -114,7 +114,7 @@ func TestDeviceApprovalHandlers(t *testing.T) {
 	t.Run("update", func(t *testing.T) {
 		var idList []types.DeviceApprovalID
 		defer func() {
-			assert.Nil(t, db.DeleteDeviceApprovalOfUser(namespace, userID, idList))
+			assert.Nil(t, db.DeleteDeviceApprovalOfUser(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 30; i++ {
 			approval, err := devt.NewDeviceApprovalForTest(namespace, username, userID)
@@ -147,7 +147,7 @@ func TestDeviceApprovalHandlers(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		var idList []types.DeviceApprovalID
 		defer func() {
-			assert.Nil(t, db.DeleteDeviceApprovalOfUser(namespace, userID, idList))
+			assert.Nil(t, db.DeleteDeviceApprovalOfUser(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 50; i++ {
 			approval, err := devt.NewDeviceApprovalForTest(namespace, username, userID)
@@ -206,7 +206,7 @@ func TestDeviceHandlers(t *testing.T) {
 	}
 	adminUserID := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, adminUserID))
+		assert.Nil(t, db.DeleteUser(nil, namespace, adminUserID))
 	}()
 
 	_, adminToken := dbt.CreateTokenForTest(namespace, adminUserID, adminUsername, true, nil)
@@ -218,7 +218,7 @@ func TestDeviceHandlers(t *testing.T) {
 	}
 	userID := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, userID))
+		assert.Nil(t, db.DeleteUser(nil, namespace, userID))
 	}()
 
 	handler := newHandlerImpl(fwconfig.NewServiceEmulator(), testLogger)
@@ -235,7 +235,7 @@ func TestDeviceHandlers(t *testing.T) {
 
 		var idList []types.DeviceID
 		defer func() {
-			assert.Nil(t, db.DeleteUserDevices(namespace, userID, idList))
+			assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 20; i++ {
 			ip := fmt.Sprintf("100.64.0.%v", i+10)
@@ -306,13 +306,13 @@ func TestDeviceHandlers(t *testing.T) {
 		err = handler.PostDevice(adminToken, postDeviceParam)
 		assert.NotNil(t, err)
 
-		assert.Nil(t, db.DeleteUserDevices(namespace, userID, nil))
+		assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, nil))
 	})
 
 	t.Run("update", func(t *testing.T) {
 		var idList []types.DeviceID
 		defer func() {
-			assert.Nil(t, db.DeleteUserDevices(namespace, userID, idList))
+			assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 20; i++ {
 			ip := fmt.Sprintf("100.64.0.%v", i+10)
@@ -356,7 +356,7 @@ func TestDeviceHandlers(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		var idList []types.DeviceID
 		defer func() {
-			assert.Nil(t, db.DeleteUserDevices(namespace, userID, idList))
+			assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, idList))
 		}()
 		for i := 0; i < 20; i++ {
 			ip := fmt.Sprintf("100.64.0.%v", i+10)

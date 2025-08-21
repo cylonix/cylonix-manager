@@ -71,7 +71,7 @@ func TestDeviceApprovalDB(t *testing.T) {
 		assert.Equal(t, 3, len(list))
 	}
 
-	err = DeleteDeviceApproval(namespace, &userID, approvalID2)
+	err = DeleteDeviceApproval(nil, namespace, &userID, approvalID2)
 	assert.Nil(t, err)
 
 	size, list, err = GetDeviceApprovalList(namespace, &userID, nil, nil, nil, nil, nil, nil, nil, &page, &pageSize)

@@ -112,7 +112,10 @@ func getUser(
 			err = fmt.Errorf("failed to get network domain for new user: %w", err)
 			return
 		}
-		roles = append(roles, types.NetworkDomainAdminRole)
+		roles = append(roles, []string{
+			types.NetworkDomainAdminRole,
+			types.NetworkDomainOwnerRole,
+		}...)
 	}
 	tier := optional.P(utils.DefaultUserTier)
 	user, err = db.AddUser(

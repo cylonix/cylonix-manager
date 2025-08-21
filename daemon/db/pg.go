@@ -58,3 +58,15 @@ func getPGconn() (*gorm.DB, error) {
 	}
 	return db, nil
 }
+
+func BeginTransaction() (*gorm.DB, error) {
+	db, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	tx := db.Begin()
+	if err := tx.Error; err != nil {
+		return nil, err
+	}
+	return tx, nil
+}

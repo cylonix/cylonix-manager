@@ -64,7 +64,12 @@ func addTenantAndAdminToken(namespace string) (*utils.UserTokenData, error) {
 		return nil, err
 	}
 
-	tier, err := common.GetOrCreateDefaultUserTier()
+	tier, err := db.CreateUserTier(&types.UserTier{
+		Name:           namespace + "-tier",
+		Description:    "user tier for " + namespace,
+		MaxUserCount:   20,
+		MaxDeviceCount: 100,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -73,17 +78,32 @@ func addTenantAndAdminToken(namespace string) (*utils.UserTokenData, error) {
 	return adminToken, db.NewTenant(&types.TenantConfig{
 		Namespace:  namespace,
 		UserTierID: &tier.ID,
+		TenantSetting: types.TenantSetting{
+			MaxUser:       200,
+			MaxDevice:     1000,
+			NetworkDomain: namespace + "test.org",
+		},
 	}, adminUserID, adminUser, namespace)
 }
 
 func delTenantAndAdminToken(t *testing.T, namespace string, adminToken *utils.UserTokenData) {
 	assert.Nil(t, adminToken.Delete())
-	assert.Nil(t, db.DeleteUserTierByName(utils.DefaultUserTier))
+	if !assert.Nil(t, db.DeleteUserTierByName(namespace+"-tier")) {
+		users, _, err := db.GetUserList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		if err != nil {
+			t.Errorf("Failed to get user list for namespace %s: %v", namespace, err)
+		}
+		names := make([]string, 0, len(users))
+		for _, user := range users {
+			names = append(names, user.UserBaseInfo.DisplayName)
+		}
+		t.Errorf("Failed to delete user tier %s, users: %v", namespace+"-tier", names)
+	}
 	assert.Nil(t, db.DeleteTenantConfigByNamespace(namespace))
 }
 
 func TestUser(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-user"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -114,7 +134,9 @@ func TestUser(t *testing.T) {
 		login, err := db.GetUserLoginByLoginName(namespace, username)
 		if assert.Nil(t, err) && assert.NotNil(t, login) {
 			assert.Equal(t, username, login.LoginName)
-			defer db.DeleteUser(namespace, login.UserID)
+			defer func() {
+				assert.Nil(t, db.DeleteUser(nil, namespace, login.UserID))
+			}()
 			login, err = db.GetUserLogin(namespace, login.ID)
 			if assert.Nil(t, err) && assert.NotNil(t, login) {
 				assert.Equal(t, username, login.LoginName)
@@ -126,7 +148,7 @@ func TestUser(t *testing.T) {
 		ids := make([]types.ID, 100)
 		defer func() {
 			for _, id := range ids {
-				assert.Nil(t, db.DeleteUser(namespace, id))
+				assert.Nil(t, db.DeleteUser(nil, namespace, id))
 			}
 		}()
 		for i := 0; i < 100; i++ {
@@ -318,7 +340,7 @@ func addAdminUser(namespace string) (*types.User, error) {
 }
 
 func assertDeleteUser(t *testing.T, namespace string, userID types.UserID) {
-	assert.Nil(t, db.DeleteUser(namespace, userID))
+	assert.Nil(t, db.DeleteUser(nil, namespace, userID))
 }
 
 func newChangePasswdParam(userID, username string, newPasswd string) api.ChangePasswordRequestObject {
@@ -393,7 +415,7 @@ func deleteUserApproval(t *testing.T, namespace string, approvalIDs []types.User
 	assert.Nil(t, db.DeleteUserApprovals(namespace, approvalIDs))
 }
 func TestRegisterUser(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "test-register-user-namespace"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -442,7 +464,7 @@ func TestRegisterUser(t *testing.T) {
 			}
 			newUser, err := db.GetUserByLoginName(namespace, username)
 			if assert.Nil(t, err) && assert.NotNil(t, newUser) {
-				defer db.DeleteUser(namespace, newUser.ID)
+				defer db.DeleteUser(nil, namespace, newUser.ID)
 			}
 		}
 	})
@@ -479,7 +501,7 @@ func delAlarms(t *testing.T, namespace string, idList []types.ID) {
 }
 
 func TestAlarm(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-alarm"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -491,7 +513,7 @@ func TestAlarm(t *testing.T) {
 	if !assert.Nil(t, err) || !assert.NotNil(t, user) {
 		return
 	}
-	defer db.DeleteUser(namespace, user.ID)
+	defer db.DeleteUser(nil, namespace, user.ID)
 	userID := user.ID
 
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
@@ -571,7 +593,7 @@ func delAlerts(t *testing.T, namespace string, alertType models.NoticeType, idLi
 }
 
 func TestAlert(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-alert"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -583,7 +605,7 @@ func TestAlert(t *testing.T) {
 	if !assert.Nil(t, err) || !assert.NotNil(t, user) {
 		return
 	}
-	defer db.DeleteUser(namespace, user.ID)
+	defer db.DeleteUser(nil, namespace, user.ID)
 	userID := user.ID
 
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
@@ -657,7 +679,7 @@ func TestAlert(t *testing.T) {
 }
 
 func TestUserTrafficStats(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-user-traffic-stats"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -669,7 +691,7 @@ func TestUserTrafficStats(t *testing.T) {
 	if !assert.Nil(t, err) || !assert.NotNil(t, user) {
 		return
 	}
-	defer db.DeleteUser(namespace, user.ID)
+	defer db.DeleteUser(nil, namespace, user.ID)
 	userID := user.ID
 
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
@@ -681,7 +703,7 @@ func TestUserTrafficStats(t *testing.T) {
 	}
 	deviceID := device.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUserDevices(namespace, userID, []types.DeviceID{deviceID}))
+		assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}))
 	}()
 
 	var idList []types.DeviceWgTrafficStatsID
@@ -721,7 +743,7 @@ func TestUserSummaryStats(t *testing.T) {
 	}
 	metrics.SetPrometheusClient(prometheusE)
 
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-user-summary-stats"
 	adminToken, err := addTenantAndAdminToken(namespace)
 	defer delTenantAndAdminToken(t, namespace, adminToken)
@@ -732,7 +754,7 @@ func TestUserSummaryStats(t *testing.T) {
 	if !assert.Nil(t, err) || !assert.NotNil(t, adminUser) {
 		return
 	}
-	defer db.DeleteUser(namespace, adminUser.ID)
+	defer db.DeleteUser(nil, namespace, adminUser.ID)
 	adminToken.UserID = adminUser.ID.UUID()
 
 	username := "user-test-user-summary-stats"
@@ -740,7 +762,7 @@ func TestUserSummaryStats(t *testing.T) {
 	if !assert.Nil(t, err) || !assert.NotNil(t, user) {
 		return
 	}
-	defer db.DeleteUser(namespace, user.ID)
+	defer db.DeleteUser(nil, namespace, user.ID)
 	userID := user.ID
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
 	defer userToken.Delete()
@@ -751,7 +773,7 @@ func TestUserSummaryStats(t *testing.T) {
 	}
 	deviceID := device.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUserDevices(namespace, userID, []types.DeviceID{deviceID}))
+		assert.Nil(t, db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}))
 	}()
 
 	prometheusE.SetUserSummaryStats(namespace, userID.String(), []models.SummaryStats{
@@ -795,7 +817,7 @@ func TestUserSummaryStats(t *testing.T) {
 }
 
 func TestProfileImg(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	var (
 		namespace = "profile-namespace"
 		username  = "profile-username"
@@ -882,7 +904,7 @@ func TestProfileImg(t *testing.T) {
 }
 
 func TestAccessPoint(t *testing.T) {
-	handler := newHandlerImpl(testLogger)
+	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-access-point"
 	username := "username-test-access-point"
 

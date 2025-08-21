@@ -152,18 +152,53 @@ func SetDeviceApprovalState(namespace string, userID *types.UserID, approvalID t
 	}
 	return tx.Commit().Error
 }
-func DeleteDeviceApproval(namespace string, userID *types.UserID, deviceApprovalID types.DeviceApprovalID) error {
+func DeleteDeviceApproval(
+	tx *gorm.DB, namespace string, userID *types.UserID,
+	deviceApprovalID types.DeviceApprovalID,
+) error {
 	_, err := GetDeviceApproval(namespace, userID, deviceApprovalID)
 	if err != nil && !errors.Is(err, ErrDeviceApprovalNotExists) {
 		return err
 	}
-	return postgres.Delete(&types.DeviceApproval{}, "id = ? and namespace = ?", deviceApprovalID, namespace)
-}
-func DeleteDeviceApprovalOfUser(namespace string, userID types.UserID, idList []types.DeviceApprovalID) error {
-	if len(idList) <= 0 {
-		return postgres.Delete(&types.DeviceApproval{}, "namespace = ? and user_id = ?", namespace, userID)
+	if tx != nil {
+		return tx.Delete(
+			&types.DeviceApproval{},
+			"id = ? and namespace = ?",
+			deviceApprovalID, namespace,
+		).Error
 	}
-	return postgres.Delete(&types.DeviceApproval{}, "namespace = ? and user_id = ? and id in ?", namespace, userID, idList)
+	return postgres.Delete(
+		&types.DeviceApproval{},
+		"id = ? and namespace = ?", deviceApprovalID, namespace,
+	)
+}
+func DeleteDeviceApprovalOfUser(
+	tx *gorm.DB, namespace string, userID types.UserID,
+	idList []types.DeviceApprovalID,
+) error {
+	if len(idList) <= 0 {
+		if tx != nil {
+			return tx.Delete(
+				&types.DeviceApproval{},
+				"namespace = ? and user_id = ?", namespace, userID,
+			).Error
+		}
+		return postgres.Delete(
+			&types.DeviceApproval{},
+			"namespace = ? and user_id = ?", namespace, userID,
+		)
+	}
+	if tx != nil {
+		return tx.Delete(
+			&types.DeviceApproval{},
+			"namespace = ? and user_id = ? and id in ?",
+			namespace, userID, idList,
+		).Error
+	}
+	return postgres.Delete(
+		&types.DeviceApproval{},
+		"namespace = ? and user_id = ? and id in ?", namespace, userID, idList,
+	)
 }
 // NewDeviceApproval creates a new device approval record. The caller pass
 // in an approval UUID that typically can be deterministically obtained through

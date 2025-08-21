@@ -39,7 +39,7 @@ func TestAddLogin(t *testing.T) {
 	}
 	userID1 := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, userID1))
+		assert.Nil(t, db.DeleteUser(nil, namespace, userID1))
 	}()
 	_, userToken1 := createTokenForTest(namespace, userID1, phone, false, nil)
 	defer userToken1.Delete()
@@ -72,7 +72,7 @@ func TestAddLogin(t *testing.T) {
 	}
 	userID2 := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, userID2))
+		assert.Nil(t, db.DeleteUser(nil, namespace, userID2))
 	}()
 
 	params = newLoginParam(phone, code)

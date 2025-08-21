@@ -76,20 +76,24 @@ func clearDeviceCache(namespace string, userID types.UserID, deviceID types.Devi
 	return cleanCache(namespace, userDeviceCacheByDeviceIDPath, &userID, &deviceIDStr)
 }
 
-func DeleteUserDevices(namespace string, userID types.UserID, deviceIDs []types.DeviceID) error {
+func DeleteUserDevices(tx *gorm.DB, namespace string, userID types.UserID, deviceIDs []types.DeviceID) error {
 	if len(deviceIDs) <= 0 {
 		return DeleteAllDevicesOfUser(namespace, userID)
 	}
 
 	lockCache(userID.String())
 	defer unlockCache(userID.String())
-
-	tx, err := postgres.Connect()
-	if err != nil {
-		return err
+	var err error
+	commit := false
+	if tx == nil {
+		tx, err = postgres.Connect()
+		if err != nil {
+			return err
+		}
+		tx = tx.Begin()
+		commit = true
+		defer tx.Rollback()
 	}
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	if len(deviceIDs) == 1 {
 		if err = clearDeviceCache(namespace, userID, deviceIDs[0]); err != nil {
@@ -119,7 +123,9 @@ func DeleteUserDevices(namespace string, userID types.UserID, deviceIDs []types.
 			}
 		}
 	}
-
+	if !commit {
+		return nil
+	}
 	return tx.Commit().Error
 }
 
@@ -580,8 +586,8 @@ func GetWgNodeIDListByUserIDList(namespace string, userIDList []types.UserID) ([
 	}
 	result := []uint64{}
 	tx = tx.Model(&types.WgInfo{}).
-			Select("node_id").
-			Where("namespace = ? and user_id in ?", namespace, userIDList)
+		Select("node_id").
+		Where("namespace = ? and user_id in ?", namespace, userIDList)
 	if err := tx.Find(&result).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -615,9 +621,9 @@ func GetWgNodeIDListByVpnLabels(namespace string, labels []types.Label) ([]uint6
 
 	result := []uint64{}
 	tx = tx.Model(&types.WgInfo{}).
-			Select("node_id").
-			Where("namespace = ? and id in ?", namespace, deviceIDs).
-			Find(&result)
+		Select("node_id").
+		Where("namespace = ? and id in ?", namespace, deviceIDs).
+		Find(&result)
 	if err = tx.Error; err != nil {
 		return nil, err
 	}
@@ -771,10 +777,10 @@ func UpdateDevice(namespace string, userID types.UserID, deviceID types.DeviceID
 		if err := getLabelIDs(tx, namespace, labels); err != nil {
 			return err
 		}
-		vpnLabels := types.SliceFilter(labels, func(l types.Label) bool{
+		vpnLabels := types.SliceFilter(labels, func(l types.Label) bool {
 			return l.Category == types.LabelCategoryVPN
 		})
-		otherLabels := types.SliceFilter(labels, func(l types.Label) bool{
+		otherLabels := types.SliceFilter(labels, func(l types.Label) bool {
 			return l.Category != types.LabelCategoryVPN
 		})
 		if len(vpnLabels) > 0 {
@@ -794,10 +800,10 @@ func UpdateDevice(namespace string, userID types.UserID, deviceID types.DeviceID
 		if err := getLabelIDs(tx, namespace, labels); err != nil {
 			return err
 		}
-		vpnLabels := types.SliceFilter(labels, func(l types.Label) bool{
+		vpnLabels := types.SliceFilter(labels, func(l types.Label) bool {
 			return l.Category == types.LabelCategoryVPN
 		})
-		otherLabels := types.SliceFilter(labels, func(l types.Label) bool{
+		otherLabels := types.SliceFilter(labels, func(l types.Label) bool {
 			return l.Category != types.LabelCategoryVPN
 		})
 		if len(vpnLabels) > 0 {

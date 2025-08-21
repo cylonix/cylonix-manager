@@ -11,6 +11,7 @@ import (
 	api "cylonix/sase/api/v2"
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/daemon/common"
+	"cylonix/sase/pkg/fwconfig"
 	ulog "cylonix/sase/pkg/logging/logfields"
 	"errors"
 
@@ -147,10 +148,10 @@ func (s *UserService) Register(d *api.StrictServer) error {
 	return nil
 }
 
-func NewService(logger *logrus.Entry) *UserService {
+func NewService(fwService fwconfig.ConfigService, logger *logrus.Entry) *UserService {
 	logger = logger.WithField(ulog.LogSubsys, "user-handler")
 	return &UserService{
-		handler:       newHandlerImpl(logger),
+		handler:       newHandlerImpl(fwService, logger),
 		friendHandler: newFriendHandlerImpl(logger),
 		logger:        logger,
 	}

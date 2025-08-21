@@ -165,7 +165,7 @@ func (d *Daemon) InstantiateAPI() error {
 		policy.NewService(fwService, daemonLogger),
 		qrcode.NewService(daemonLogger),
 		tenant.NewService(daemonLogger),
-		user.NewService(daemonLogger),
+		user.NewService(fwService, daemonLogger),
 		wslog.NewService(wslog.Config{Addr: wsAddr}, daemonLogger), // websocket for logs
 		d.supervisor,
 		d.vpn,

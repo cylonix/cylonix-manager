@@ -69,7 +69,7 @@ func TestQrCode(t *testing.T) {
 	}
 	userID := user.ID
 	defer func() {
-		assert.Nil(t, db.DeleteUser(namespace, userID))
+		assert.Nil(t, db.DeleteUser(nil, namespace, userID))
 	}()
 
 	username := "qrcode_username"

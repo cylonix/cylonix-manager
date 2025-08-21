@@ -68,7 +68,8 @@ func GetUserList(
 	pg = pg.
 		Preload("Labels").
 		Preload("UserBaseInfo").
-		Preload("UserLogins")
+		Preload("UserLogins").
+		Preload("UserTier")
 	if err = pg.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -143,6 +144,19 @@ func GetUserBaseInfoList(namespace string, userIDs []types.UserID) ([]types.User
 		return nil, err
 	}
 	return ret, nil
+}
+
+func GetUserIDList(tx *gorm.DB, namespace string, network *string) ([]types.UserID, error) {
+	var userIDs []types.UserID
+	query := tx.Model(&types.User{}).Select("id").Where("namespace = ?", namespace)
+	if network != nil {
+		query = query.Where("network = ?", *network)
+	}
+	err := query.Find(&userIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return userIDs, nil
 }
 
 func GetUserFast(namespace string, userID types.UserID, withDetails bool) (*types.User, error) {
@@ -301,6 +315,7 @@ func getUserPreloadConn() (*gorm.DB, error) {
 		Preload("Labels").
 		Preload("FwStats").
 		Preload("UserLogins").
+		Preload("UserTier").
 		Preload("UserBaseInfo"), nil
 }
 func checkUserCreationError(err error) error {
@@ -396,11 +411,14 @@ func DeleteUserTierByName(name string) error {
 	tier, err := GetUserTierByName(name)
 	if err != nil {
 		if !errors.Is(err, ErrUserTierNotExists) {
-			return err
+			return fmt.Errorf("failed to delete user tier %s: %w", name, err)
 		}
 		return nil
 	}
-	return DeleteUserTier(tier.ID)
+	if err := DeleteUserTier(tier.ID); err != nil {
+		return fmt.Errorf("failed to delete user tier %s: %w", name, err)
+	}
+	return nil
 }
 
 func AddUser(
@@ -585,7 +603,7 @@ func SetUserMustChangePassword(namespace string, userID uint, mustChangePassword
 		Error
 }
 
-func DeleteUser(namespace string, userID types.UserID) error {
+func DeleteUser(tx *gorm.DB, namespace string, userID types.UserID) error {
 	if namespace == "" || userID == types.NilID {
 		return ErrBadParams
 	}
@@ -594,12 +612,17 @@ func DeleteUser(namespace string, userID types.UserID) error {
 	}
 	lockCache(userID.String())
 	defer unlockCache(userID.String())
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var err error
+	commit := false
+	if tx == nil {
+		commit = true
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		tx = tx.Begin()
+		defer tx.Rollback()
 	}
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	value := &types.User{Model: types.Model{ID: userID}, Namespace: namespace}
 	if err = tx.Select(clause.Associations).Delete(value).Error; err != nil {
@@ -607,6 +630,9 @@ func DeleteUser(namespace string, userID types.UserID) error {
 	}
 	if err = deleteUserCache(namespace, userID); err != nil {
 		return err
+	}
+	if !commit {
+		return nil
 	}
 	return tx.Commit().Error
 }
@@ -1047,6 +1073,9 @@ func AddUserRole(namespace string, userID types.UserID, role string) error {
 	}
 	if role == string(models.PredefinedRolesNetworkAdmin) {
 		role = types.NetworkDomainAdminRole
+	}
+	if role == string(models.PredefinedRolesNetworkOwner) {
+		role = types.NetworkDomainOwnerRole
 	}
 	roles := append(user.Roles, role)
 	tx, err := getPGconn()

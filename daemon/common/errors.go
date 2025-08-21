@@ -108,6 +108,10 @@ func (e BadParamsErr) Code() string {
 	return string(models.BadRequestErrorCodeErrBadParams)
 }
 
+func (e BadParamsErr) ToString() string {
+	return e.err.Error()
+}
+
 func NewBadParamsErr(err error) BadParamsErr {
 	return BadParamsErr{err: err}
 }

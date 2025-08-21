@@ -148,6 +148,22 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 	return user, nil
 }
 
+func DeleteHsUser(namespace, network string, userID types.UserID) error {
+	request := &v1.DeleteUserRequest{
+		Name:      userID.String(),
+		Namespace: &namespace,
+		Network:   &network,
+	}
+	client := getHsClient()
+	ctx, cancel := newHsClientContext()
+	defer cancel()
+	_, err := client.DeleteUser(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to delete user from headscale: %w", err)
+	}
+	return nil
+}
+
 func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*string, error) {
 	if headscale == nil {
 		return nil, ErrHeadscaleNotInitialized
