@@ -499,7 +499,7 @@ func GetWgInfoListByWgName(namespace, wgName string) ([]*types.WgInfo, error) {
 }
 func GetWgInfoList(namespace *string, userID *types.UserID, contain *string,
 	page, pageSize *int,
-) ([]types.WgInfo, int64, error) {
+) ([]*types.WgInfo, int64, error) {
 	pg, err := postgres.Connect()
 	if err != nil {
 		return nil, 0, err
@@ -519,7 +519,7 @@ func GetWgInfoList(namespace *string, userID *types.UserID, contain *string,
 	if err = pg.Count(&total).Error; err != nil {
 		return nil, 0, ErrInternalErr
 	}
-	ret := []types.WgInfo{}
+	ret := []*types.WgInfo{}
 	pg = postgres.Page(pg, total, page, pageSize)
 	if err = pg.Find(&ret).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

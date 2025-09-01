@@ -465,6 +465,9 @@ func (c *WgClient) addNode(namespace string) error {
 	if err != nil {
 		return err
 	}
+	if user.NetworkDomain == nil || *user.NetworkDomain == "" {
+		user.NetworkDomain = optional.P(NamespaceRootUserNetworkDomain(namespace))
+	}
 	existing, err := db.GetWgNode(namespace, c.wgName)
 	if err == nil {
 		current.ID = existing.ID
@@ -529,6 +532,18 @@ func (c *WgClient) sendUsers(namespace string, logger *logrus.Entry) {
 		return
 	}
 	if err := c.api.CreateUsers(context.Background(), namespace, wgInfos); err != nil {
+		logger.WithError(err).Errorln("Failed to send users to wg")
+	}
+
+	// TODO: remove the following once we support routed wg networks.
+	// This is to program all the peers in the wg-gateways so that app
+	// does not need to update their wg of choice for now.
+	allWgInfos, _, err := db.GetWgInfoList(&namespace, nil, nil, nil, nil)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get all wg infos from db.")
+		return
+	}
+	if err := c.api.CreateUsers(context.Background(), namespace, allWgInfos); err != nil {
 		logger.WithError(err).Errorln("Failed to send users to wg")
 	}
 
@@ -1211,6 +1226,51 @@ func CreateDeviceInWgAgent(w *models.WgDevice) error {
 	if err != nil {
 		log.WithError(err).Error("Failed to create wg user in wg-agent")
 		return err
+	}
+	return nil
+}
+
+func CreateDeviceInAllWgAgents(w *models.WgDevice) error {
+	if w == nil {
+		return fmt.Errorf("%w: nil wg device", ErrWgBadParameters)
+	}
+	if w.Name == "" || w.Namespace == "" ||
+		w.UserID == uuid.Nil || w.DeviceID == uuid.Nil ||
+		w.PublicKey == "" || len(w.Addresses) <= 0 {
+		return fmt.Errorf(
+			"%w: wgID=%v name=%v namespace=%v wgName=%v userID=%v deviceID=%v pubKey=%v len(addr)=%v",
+			ErrWgBadParameters, w.WgID, w.Name, w.Namespace,
+			optional.String(w.WgName), w.UserID, w.DeviceID, w.PublicKey,
+			len(w.Addresses),
+		)
+	}
+
+	if wgService == nil {
+		return ErrWgServiceNotReady
+	}
+
+	namespace := w.Namespace
+	username := w.Name
+	wgUserID := pu.NewWgUserID(w.Addresses[0])
+	wgDeviceID := w.DeviceID.String()
+	log := getWgInfoLogger(w, wgUserID)
+	ctx := context.Background()
+
+	v, ok := wgService.getWgNamespaceClients(namespace)
+	if !ok || v == nil || len(v.clients) <= 0 {
+		return nil // No wg for this namespace
+	}
+	for _, wgClient := range v.clients {
+		if wgClient.api == nil || !wgClient.active {
+			continue
+		}
+		err := wgClient.api.CreateUser(ctx, namespace, username, wgUserID, wgDeviceID, w.PublicKey, w.AllowedIps)
+		if err != nil {
+			log.WithField("wg", wgClient.wgName).
+				WithError(err).
+				Error("Failed to create wg user in wg-agent")
+			return err
+		}
 	}
 	return nil
 }

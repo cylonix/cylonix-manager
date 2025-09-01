@@ -6,6 +6,12 @@ all: build
 
 APP_DIR := manager
 APP_NAME := cylonix-manager
+OS := $(shell uname -s)
+ifeq ($(OS),Darwin)
+	DOT_CLEAN := dot_clean .; dot_clean .?*
+else ifeq ($(OS),Linux)
+	DOT_CLEAN := echo dot_clean is not required
+endif
 
 all: build
 
@@ -85,7 +91,8 @@ endif
 
 docker: alpine
 alpine:
-	docker build  \
+	$(DOT_CLEAN)
+	DOCKER_DEFAULT_PLATFORM="linux/amd64" docker build  \
 		--network host \
 		-f docker/Dockerfile.$@ \
 		--tag cylonix/${APP_NAME}:$@-$(VERSION) \

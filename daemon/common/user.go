@@ -115,8 +115,13 @@ func CreateUser(
 	return nil
 }
 
+func NamespaceRootUserNetworkDomain(namespace string) string {
+	return "root." + namespace
+}
+
 func GetOrCreateNamespaceRootUser(namespace string) (*types.User, error) {
 	username := "root"
+	networkDomain := NamespaceRootUserNetworkDomain(namespace)
 	user, err := db.GetUserByLoginName(namespace, username)
 	if err != nil {
 		if errors.Is(err, db.ErrUserNotExists) || errors.Is(err, db.ErrUserLoginNotExists) {
@@ -128,7 +133,7 @@ func GetOrCreateNamespaceRootUser(namespace string) (*types.User, error) {
 					Namespace:   namespace,
 					Credential:  utils.NewPassword(),
 				},
-			}, nil, nil, nil, nil, nil)
+			}, nil, nil, nil, &networkDomain, nil)
 		}
 	}
 	return user, err

@@ -57,7 +57,9 @@ func (w *wgHandlerImpl) List(auth interface{}, requestObject api.ListVpnDeviceRe
 		logger.WithError(err).Errorln("Failed to list wg devices from db.")
 		return nil, err
 	}
-	wgDevices := types.WgInfoList(list).ToModel()
+	wgDevices, _ := types.SliceMap(list, func(w *types.WgInfo) (models.WgDevice, error) {
+		return *w.ToModel(), nil
+	})
 	online := int64(0)
 	for _, w := range wgDevices {
 		if w.Name == "" {

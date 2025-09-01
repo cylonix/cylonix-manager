@@ -130,7 +130,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		log.WithError(err).Errorln("update device last seen failed")
 	}
 	peers, onlinePeers := []uint64{}, []uint64{}
-	if common.IsGatewaySupported(namespace, userID, deviceID) {
+	/*if common.IsGatewaySupported(namespace, userID, deviceID) {
 		wgPeers, onlineWgs, err := s.getWgGatewayPeers(m)
 		if err != nil {
 			return nil, nil, err
@@ -138,7 +138,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		// TODO: evaluate to send only the online wg gateways.
 		peers = append(peers, wgPeers...)
 		onlinePeers = onlineWgs
-	}
+	}*/
 	list, err := s.getApprovedPeers(namespace, userID, deviceID, log)
 	if err != nil {
 		log.WithError(err).Errorln("Failed to list approved peers")
@@ -269,7 +269,8 @@ func (s *VpnService) RotateNodeKey(
 	}
 	// Only update the key to the wg server the machine is connected to.
 	if m.WgName == "" {
-		return nil
+		// TODO: remove if to support routed wg networks.
+		return common.CreateDeviceInAllWgAgents(m.ToModel())
 	}
 	m.PublicKeyHex = nodeKeyHex
 	if err := common.WgUpdateDevicePublicKey(m.ToModel()); err != nil {
@@ -525,7 +526,7 @@ func (s *VpnService) NewDevice(
 	}
 	log.Infoln("Device added to db")
 
-	if !common.IsGatewaySupported(namespace, userID, deviceID) || wgName == "" {
+	if !common.IsGatewaySupported(namespace, userID, deviceID) {
 		return device, nil
 	}
 
@@ -541,6 +542,16 @@ func (s *VpnService) NewDevice(
 			}
 		}
 	}()
+
+	// TODO: remove if to support routed wg networks.
+	if wgName == "" {
+		if err := common.CreateDeviceInAllWgAgents(wgDevice); err != nil {
+			log.WithError(err).Error("Failed to create device in all wg agents")
+			failed = true
+			return nil, err
+		}
+		return device, nil
+	}
 
 	if err = common.CreateDeviceInWgAgent(wgDevice); err != nil {
 		log.WithError(err).Error("Failed to create user in wg agent")

@@ -661,6 +661,8 @@ func (n *NamespaceInfo) IsFwServiceSupported() bool {
 	}
 }
 func (n *NamespaceInfo) IsGatewaySupported() bool {
+	// FIXME
+	return n != nil
 	if n.Mode == nil {
 		return false
 	}
