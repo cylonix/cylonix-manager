@@ -130,7 +130,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		log.WithError(err).Errorln("update device last seen failed")
 	}
 	peers, onlinePeers := []uint64{}, []uint64{}
-	/*if common.IsGatewaySupported(namespace, userID, deviceID) {
+	if common.IsGatewaySupported(namespace, userID, deviceID) {
 		wgPeers, onlineWgs, err := s.getWgGatewayPeers(m)
 		if err != nil {
 			return nil, nil, err
@@ -138,7 +138,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		// TODO: evaluate to send only the online wg gateways.
 		peers = append(peers, wgPeers...)
 		onlinePeers = onlineWgs
-	}*/
+	}
 	list, err := s.getApprovedPeers(namespace, userID, deviceID, log)
 	if err != nil {
 		log.WithError(err).Errorln("Failed to list approved peers")

@@ -698,6 +698,9 @@ func IsGatewaySupported(namespace string, userID types.UserID, deviceID types.De
 	if !ok {
 		return false
 	}
+	if namespace != "personal-users2" {
+		return false
+	}
 	n := (*NamespaceInfo)(value)
 	return n.IsGatewaySupported()
 }
