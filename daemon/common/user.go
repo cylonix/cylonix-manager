@@ -32,13 +32,10 @@ func wrongEmailErr(email string) error {
 	return fmt.Errorf("%w: email %v does not match", ErrModelBadParameters, email)
 }
 
-func CheckUserOneTimeCode(namespace string, userID types.UserID, isAdmin bool, codeP, emailP, phoneP *string) (*types.User, error) {
+func CheckUserOneTimeCode(namespace string, userID types.UserID, codeP, emailP, phoneP *string) (*types.User, error) {
 	su, err := db.GetUserFast(namespace, userID, false)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to get user from db: %v", ErrInternalErr, err)
-	}
-	if isAdmin {
-		return su, nil
 	}
 	ub := &su.UserBaseInfo
 	if codeP == nil || (phoneP == nil && emailP == nil) {

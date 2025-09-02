@@ -24,6 +24,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	maxNetworkDomainRetries = 5
+)
+
 type handlerImpl struct {
 	logger *logrus.Entry
 }
@@ -217,9 +221,26 @@ func (h *handlerImpl) AddConfig(auth interface{}, requestObject api.AddTenantCon
 	// Check if network domain is set.
 	networkDomain := optional.V(c.NetworkDomain, "")
 	if networkDomain == "" {
-		err = common.NewBadParamsErr(errors.New("missing network domain"))
-		logger.WithError(err).Errorln("Failed.")
-		return
+		for i := 0; i < maxNetworkDomainRetries; i++ {
+			domain := common.GenrateNetworkDomain()
+			inUse, newErr := db.IsNetworkDomainInUse(domain)
+			if newErr != nil {
+				err = fmt.Errorf("failed to check if network domain is in use: %w", newErr)
+				logger.WithError(err).Errorln("Failed.")
+				return
+			}
+			if inUse {
+				logger.WithField("domain", domain).Debugln("network domain in use, retrying...")
+				continue
+			}
+			networkDomain = domain
+			break
+		}
+		if networkDomain == "" {
+			err = common.NewBadParamsErr(errors.New("missing network domain"))
+			logger.WithError(err).Errorln("Failed.")
+			return
+		}
 	}
 
 	// Set tenant registration state to approved.

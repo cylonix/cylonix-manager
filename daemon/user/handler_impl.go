@@ -330,7 +330,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 			err = h.setUsernamePassword(
 				namespace, *update.Username, optional.String(update.Password),
 				current.LoginName, models.LoginTypeUsername,
-				optional.Bool(su.IsAdminUser), logger,
+				logger,
 			)
 			if err != nil {
 				return err
@@ -345,7 +345,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 		}
 		err = h.setUsernamePassword(
 			namespace, "", optional.String(update.Password),
-			loginName, loginType, optional.Bool(su.IsAdminUser), logger,
+			loginName, loginType, logger,
 		)
 		if err != nil {
 			return err
@@ -857,24 +857,37 @@ func (h *handlerImpl) ChangePassword(auth interface{}, requestObject api.ChangeP
 	}
 
 	// Code verification is required for non-admin users.
-	su, err := common.CheckUserOneTimeCode(namespace, userID, token.IsAdminUser, params.Code, params.Email, params.PhoneNum)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to get user from db.")
-		return nil, common.ErrInternalErr
+	if !token.IsAdminUser {
+		_, err := common.CheckUserOneTimeCode(namespace, userID, params.Code, params.Email, params.PhoneNum)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to get user from db.")
+			return nil, common.ErrInternalErr
+		}
 	}
-	current, err := db.GetUserLoginByUserIDAndLoginType(namespace, userID, types.LoginTypeUsername)
+	ofNamespace := namespace
+	if token.IsSysAdmin {
+		ofNamespace = ""
+	}
+
+	current, err := db.GetUserLoginByUserIDAndLoginType(ofNamespace, userID, types.LoginTypeUsername)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get current login from db.")
 		return nil, common.ErrInternalErr
 	}
 
-	if err = h.setUsernamePassword(namespace, "", password, current.LoginName, loginType, optional.Bool(su.IsAdminUser), logger); err != nil {
+	if err = h.setUsernamePassword(
+		current.Namespace, "", password, current.LoginName, loginType,
+		logger,
+	); err != nil {
 		return nil, err
 	}
 	return &password, nil
 }
 
-func (h *handlerImpl) setUsernamePassword(namespace string, username string, password, loginName string, mLoginType models.LoginType, isAdmin bool, logger *logrus.Entry) error {
+func (h *handlerImpl) setUsernamePassword(
+	namespace, username, password, loginName string,
+	mLoginType models.LoginType, logger *logrus.Entry,
+) error {
 	loginType := types.LoginType(mLoginType)
 	if loginType == types.LoginTypeEmail {
 		if loginName == "" {
@@ -904,7 +917,7 @@ func (h *handlerImpl) setUsernamePassword(namespace string, username string, pas
 
 	// Update the password in user login.
 	// DB will check and save the bcrypt hashed raw password.
-	if err := db.UpdateLoginUsernamePassword(login, username, password, isAdmin); err != nil {
+	if err := db.UpdateLoginUsernamePassword(login, username, password); err != nil {
 		logger.WithError(err).Errorln("Update username password in database failed.")
 		if errors.Is(err, db.ErrInvalidLoginType) {
 			return common.NewBadParamsErr(err)
@@ -1004,7 +1017,7 @@ func (h *handlerImpl) ResetPassword(requestObject api.ResetPasswordRequestObject
 	if isAdmin {
 		logger.Warnln("Admin forgetting own password.")
 	}
-	return h.setUsernamePassword(namespace, "", f.NewPassword, loginName, models.LoginTypeUsername, isAdmin, logger)
+	return h.setUsernamePassword(namespace, "", f.NewPassword, loginName, models.LoginTypeUsername, logger)
 }
 
 func (h *handlerImpl) ListNotice(auth interface{}, requestObject api.ListNoticeRequestObject) (*models.NoticeList, error) {

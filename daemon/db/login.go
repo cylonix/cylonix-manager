@@ -32,7 +32,7 @@ var (
 // - ErrSamePassword if password not changed.
 // - ErrInvalidLoginType if it is not a password login
 // - Other errors if failed to hash or save to DB.
-func UpdateLoginUsernamePassword(l *types.UserLogin, username, password string, isAdmin bool) error {
+func UpdateLoginUsernamePassword(l *types.UserLogin, username, password string) error {
 	if l.Password() == "" {
 		return ErrInvalidLoginType
 	}
@@ -140,8 +140,8 @@ func getUserLogin(namespace string, loginID types.LoginID, result interface{}) e
 	return nil
 }
 
-/// GetUserLoginByLoginName returns the first login matches.
-/// Namespace is optional.
+// GetUserLoginByLoginName returns the first login matches.
+// Namespace is optional.
 func getUserLoginByLoginName(namespace, loginName string, result interface{}) error {
 	var err error
 	if namespace == "" {
@@ -210,10 +210,20 @@ func UserLoginExists(namespace string, loginNames []string) (bool, error) {
 
 // GetUserLoginByUserIDAndLoginType returns the first login matches.
 // For username login, it will return the only record.
+// Namespace is optional
 func GetUserLoginByUserIDAndLoginType(namespace string, userID types.UserID, loginType types.LoginType) (*types.UserLogin, error) {
-	result := &types.UserLogin{}
+	var (
+		result = &types.UserLogin{}
+		where  = "namespace = ? and user_id = ? and login_type = ?"
+		err    error
+	)
 	namespace = types.NormalizeNamespace(namespace)
-	err := postgres.SelectFirst(result, "namespace = ? and user_id = ? and login_type = ?", namespace, userID, loginType)
+	if namespace == "" {
+		where = "user_id = ? and login_type = ?"
+		err = postgres.SelectFirst(result, where, userID, loginType)
+	} else {
+		err = postgres.SelectFirst(result, where, namespace, userID, loginType)
+	}
 	if err == nil {
 		return result, nil
 	}
@@ -278,7 +288,7 @@ func GetUserLoginByUserIDFast(namespace string, userID types.UserID) ([]*types.U
 			}
 			return getUserLoginByUserID(namespace, *userID, result)
 		},
-	);
+	)
 	if err != nil {
 		if errors.Is(err, errCacheNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserLoginNotExists

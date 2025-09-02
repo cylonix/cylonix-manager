@@ -94,7 +94,7 @@ func TestLoginDB(t *testing.T) {
 	}
 
 	password := "567891"
-	err = UpdateLoginUsernamePassword(login, "", password, false)
+	err = UpdateLoginUsernamePassword(login, "", password)
 	assert.Nil(t, err)
 
 	newResult, err := GetUserLogin(namespace, login.ID)

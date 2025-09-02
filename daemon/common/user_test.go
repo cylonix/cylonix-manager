@@ -16,7 +16,7 @@ func TestCheckUserOneTimeCode(t *testing.T) {
 	namespace, username := "test-namespace", "test-user-name"
 	code, email, phone := "123456", "fake@fake.com", "4087778888"
 
-	su, err := CheckUserOneTimeCode(namespace, types.NilID, false, nil, nil, nil)
+	su, err := CheckUserOneTimeCode(namespace, types.NilID, nil, nil, nil)
 	if assert.NotNil(t, err) {
 		assert.Nil(t, su)
 		assert.ErrorIs(t, err, ErrInternalErr)
@@ -28,24 +28,24 @@ func TestCheckUserOneTimeCode(t *testing.T) {
 	userID := u.ID
 	defer tu.Delete(namespace, userID)
 	userID = u.UserID
-	su, err = CheckUserOneTimeCode(namespace, userID, false, nil, nil, nil)
+	su, err = CheckUserOneTimeCode(namespace, userID, nil, nil, nil)
 	if assert.NotNil(t, err) {
 		assert.Nil(t, su)
 		assert.ErrorIs(t, err, ErrModelBadParameters)
 	}
-	su, err = CheckUserOneTimeCode(namespace, userID, false, &code, &email, nil)
+	su, err = CheckUserOneTimeCode(namespace, userID, &code, &email, nil)
 	if assert.NotNil(t, err) {
 		assert.Nil(t, su)
 		assert.ErrorIs(t, err, ErrModelBadParameters)
 	}
-	su, err = CheckUserOneTimeCode(namespace, userID, false, &code, nil, &phone)
+	su, err = CheckUserOneTimeCode(namespace, userID, &code, nil, &phone)
 	if assert.NotNil(t, err) {
 		assert.Nil(t, su)
 		assert.ErrorIs(t, err, ErrModelInvalidSmsCode)
 	}
 	token := utils.NewSmsToken(phone)
 	if assert.NotNil(t, token) && assert.Nil(t, token.Set("", code, false)) {
-		su, err = CheckUserOneTimeCode(namespace, userID, false, &code, nil, &phone)
+		su, err = CheckUserOneTimeCode(namespace, userID, &code, nil, &phone)
 		if assert.Nil(t, err) {
 			assert.NotNil(t, su)
 		}

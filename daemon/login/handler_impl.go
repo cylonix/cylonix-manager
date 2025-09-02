@@ -90,10 +90,12 @@ func (h *handlerImpl) AddLogin(auth interface{}, requestObject api.AddLoginReque
 		err := errors.New("missing input")
 		return common.NewBadParamsErr(err)
 	}
-	_, err := common.CheckUserOneTimeCode(namespace, userID, token.IsAdminUser, params.Code, params.Email, params.PhoneNum)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to check user code.")
-		return err
+	if !token.IsAdminUser {
+		_, err := common.CheckUserOneTimeCode(namespace, userID, params.Code, params.Email, params.PhoneNum)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to check user code.")
+			return err
+		}
 	}
 	login := requestObject.Body
 	logger = logger.WithField("login", login.Login).WithField("login-type", login.LoginType)
