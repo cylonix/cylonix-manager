@@ -187,8 +187,13 @@ func ChangeExitNode(wgInfo *types.WgInfo, newWgName string, token *utils.UserTok
 		}
 	}
 	if err = MoveDeviceToNewFw(namespace, userID, wgInfo.DeviceID, *wgInfo.IP(), oldWgName, newWgName); err != nil {
-		err = fmt.Errorf("failed to move device to fw: %w", err)
-		return nil, err
+		if errors.Is(err, ErrFwConfigNotExists) {
+			logger.WithError(err).Infoln("Skip moving fw since there is no fw exists for the new wg")
+			err = nil
+		} else {
+			err = fmt.Errorf("failed to move device to fw: %w", err)
+			return nil, err
+		}
 	}
 	logger.WithField("new-wg", newWgName).Infoln("moved to new wg")
 	return

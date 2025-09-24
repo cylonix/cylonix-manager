@@ -295,7 +295,7 @@ func (s *FwService) AddEndpoint(namespace string, userID types.UserID, deviceID 
 		}
 	}
 	if !found {
-		return fmt.Errorf("failed to find fw with pop=%v wg=%v fws=%v", popName, wgName, fws)
+		return fmt.Errorf("failed to find fw with pop=%v wg=%v fws=%v: %w", popName, wgName, fws, ErrFwConfigNotExists)
 	}
 	return nil
 }
@@ -329,7 +329,7 @@ func (s *FwService) DelEndpoint(namespace, endpointID, ip, wgName string) error 
 		}
 	}
 	if !found {
-		return fmt.Errorf("failed to find fw with pop=%v wg=%v: %w", popName, wgName, errFwServiceWgNotFound)
+		return fmt.Errorf("failed to find fw with pop=%v wg=%v: %w", popName, wgName, ErrFwConfigNotExists)
 	}
 	return nil
 }

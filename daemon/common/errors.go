@@ -70,7 +70,8 @@ var (
 	ErrModelUsernameRegistered            = errors.New(string(models.BadRequestErrorCodeErrUsernameRegistered))
 	ErrModelWechatNotBinding              = errors.New(string(models.BadRequestErrorCodeErrWechatNotBinding))
 	ErrModelWeChatRegistered              = errors.New(string(models.BadRequestErrorCodeErrWechatRegistered))
-	ErrResourceServiceInvalid             = errors.New("resourceService service is invalid")
+	ErrResourceServiceInvalid             = errors.New("resource service is invalid")
+	ErrFwConfigNotExists                  = errors.New("fw config does not exist")
 )
 
 func NewBadRequestErrorCode(err error) *models.BadRequestErrorCode {

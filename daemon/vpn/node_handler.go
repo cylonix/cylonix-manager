@@ -4,6 +4,7 @@
 package vpn
 
 import (
+	"cylonix/sase/daemon/common"
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/optional"
@@ -664,5 +665,70 @@ func (n *NodeHandler) NetworkDomain(user *hstypes.User) ([]byte, error) {
 }
 
 func (n *NodeHandler) RefreshToken(node *hstypes.Node) error {
+	return nil
+}
+
+func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
+	userInfo := n.getUserInfo(&node.User)
+	if userInfo == nil {
+		n.vpnService.logger.WithField("user", node.User).
+			Errorln("failed to parse user information")
+		return fmt.Errorf("failed to parse user information: %v", node.User)
+	}
+	log := n.vpnService.logger.
+		WithField("handler", "SetExitNode").
+		WithField(ulog.Namespace, userInfo.Namespace).
+		WithField(ulog.UserID, userInfo.UserID).
+		WithField("node", node.GivenName).
+		WithField("exit-node", exitNodeID).
+		WithField("machine-key", node.MachineKey.ShortString())
+
+	namespace, userID := userInfo.Namespace, userInfo.UserID
+	machineKey, err := node.MachineKey.MarshalText()
+	if err != nil {
+		return err
+	}
+	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
+	if err != nil {
+		log.WithError(err).Errorln("Failed to fetch node from the database with machine key")
+		return err
+	}
+	if wgInfo.WgID == exitNodeID {
+		log.Debugln("Exit node is the same as the current one. Skip.")
+		return nil
+	}
+	if exitNodeID == "" {
+		if _, err := common.ChangeExitNode(wgInfo, "", nil, log); err != nil {
+			log.WithError(err).Errorln("failed to change exit node")
+			return err
+		}
+		log.Debugln("Exit Node has empty ID")
+		return nil
+	}
+	newWgName := ""
+	wgID, err := types.ParseID(exitNodeID)
+	if err != nil {
+		log.
+			WithError(err).
+			Warnln("Failed to parse exit node ID")
+		// Fall through to remove it from current wg.
+	} else {
+		wg, err := db.GetWgNodeByID(wgID)
+		if err != nil {
+			if !errors.Is(err, db.ErrWgNodeNotExists) {
+				log.WithError(err).Errorln("Failed to fetch exit node from the database with ID")
+				return fmt.Errorf("failed to fetch exit node from the database with ID: %s", exitNodeID)
+			}
+			log.WithField("wg-id", exitNodeID).Debugln("Exit node is not a wg node")
+			// Fall through to remove it from current wg.
+		} else {
+			newWgName = wg.Name
+		}
+	}
+	_, err = common.ChangeExitNode(wgInfo, newWgName, nil, log)
+	if err != nil {
+		log.WithError(err).Errorln("failed to change exit node")
+		return err
+	}
 	return nil
 }
