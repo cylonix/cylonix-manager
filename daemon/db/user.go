@@ -451,7 +451,7 @@ func addUser(
 		return nil, fmt.Errorf("%w: tenant config not found for namespace %s", ErrTenantConfigNotFound, namespace)
 	}
 	if tenant.MaxUser != 0 {
-		userCount, err := UserCount(&namespace, nil)
+		userCount, err := UserCount(&namespace, nil, false)
 		if err != nil {
 			return nil, err
 		}
@@ -495,7 +495,7 @@ func addUser(
 	}
 
 	// Check user limit by the network domain.
-	n, err := UserCount(&namespace, networkDomain)
+	n, err := UserCount(&namespace, networkDomain, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count users for network domain %s: %w", *networkDomain, err)
 	}
@@ -830,7 +830,7 @@ func LabelCountUserIDMap() (map[types.UserID]int64, error) {
 	return ret, nil
 }
 
-func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string) (int64, error) {
+func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string, onlineOnly bool) (int64, error) {
 	db, err := postgres.Connect()
 	if err != nil || db == nil {
 		return 0, fmt.Errorf("failed to connect to db: %w", err)
@@ -846,19 +846,17 @@ func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string)
 	if networkDomain != nil {
 		db = db.Where("network_domain = ?", networkDomain)
 	}
+	if onlineOnly {
+		db = db.Where("last_seen > ?", time.Now().Unix()-180)
+	}
 	var ret int64
 	if err := db.Count(&ret).Error; err != nil {
 		return 0, fmt.Errorf("failed to count: %w", err)
 	}
 	return ret, nil
 }
-func OnlineUserCount(namespace string) (int64, error) {
-	user := types.User{
-		Namespace: namespace,
-	}
-	return postgres.TableCount(&user, "last_seen > ?", time.Now().Unix()-180)
-}
-func UserCount(namespace *string, networkDomain *string) (int64, error) {
+
+func UserCount(namespace *string, networkDomain *string, onlineOnly bool) (int64, error) {
 	db, err := postgres.Connect()
 	if err != nil || db == nil {
 		return 0, fmt.Errorf("failed to connect to db: %w", err)
@@ -870,6 +868,9 @@ func UserCount(namespace *string, networkDomain *string) (int64, error) {
 	}
 	if networkDomain != nil {
 		db = db.Where("network_domain = ?", networkDomain)
+	}
+	if onlineOnly {
+		db = db.Where("last_seen > ?", time.Now().Unix()-180)
 	}
 	var ret int64
 	if err := db.Count(&ret).Error; err != nil {

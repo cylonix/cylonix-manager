@@ -222,7 +222,7 @@ func (h *handlerImpl) AddConfig(auth interface{}, requestObject api.AddTenantCon
 	networkDomain := optional.V(c.NetworkDomain, "")
 	if networkDomain == "" {
 		for i := 0; i < maxNetworkDomainRetries; i++ {
-			domain := common.GenrateNetworkDomain()
+			domain := common.GenerateNetworkDomain()
 			inUse, newErr := db.IsNetworkDomainInUse(domain)
 			if newErr != nil {
 				err = fmt.Errorf("failed to check if network domain is in use: %w", newErr)
@@ -298,7 +298,7 @@ func (h *handlerImpl) DeleteConfigs(auth interface{}, requestObject api.DeleteTe
 			}
 			continue
 		}
-		userCount, err := db.UserCount(&t.Namespace, nil)
+		userCount, err := db.UserCount(&t.Namespace, nil, false)
 		if err != nil {
 			log.WithError(err).Errorln("Failed to get tenant's user count.")
 			return common.ErrInternalErr

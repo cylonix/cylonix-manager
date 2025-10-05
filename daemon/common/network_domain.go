@@ -13,7 +13,7 @@ const (
 	baseDomain = ".cylonix.org"
 )
 
-func GenrateNetworkDomain() string {
+func GenerateNetworkDomain() string {
 	num := utils.New6DigitCode()
 	return prefix + num + baseDomain
 }

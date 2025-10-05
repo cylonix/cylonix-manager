@@ -102,15 +102,15 @@ func SetUserApprovalState(
 	}
 	return tx.Commit().Error
 }
-func UserApprovalExists(namespace, loginName string) (bool, error) {
-	_, err := GetUserApprovalByLoginName(namespace, loginName)
+func UserApprovalExists(namespace, loginName string) (*types.UserApproval, error) {
+	approval, err := GetUserApprovalByLoginName(namespace, loginName)
 	if err != nil {
 		if errors.Is(err, ErrUserApprovalNotExists) {
-			return false, nil
+			return nil, nil
 		}
-		return false, err
+		return nil, err
 	}
-	return true, nil
+	return approval, nil
 }
 
 func GetUserApprovalByLoginName(namespace, loginName string) (*types.UserApproval, error) {
@@ -156,12 +156,19 @@ func DeleteUserApprovals(namespace string, idList []types.UserApprovalID) error 
 	}
 	return tx.Delete(approvals).Error
 }
-func DeleteUserApprovalByLoginName(namespace, loginName string) error {
+func DeleteUserApprovalByLoginName(tx *gorm.DB, namespace, loginName string) error {
 	if namespace == "" || loginName == "" {
 		return fmt.Errorf("cannot delete user approval with empty namespace or login: %w", ErrBadParams)
 	}
 	model := &types.UserApproval{}
-	return postgres.Delete(model, "namespace = ? and login_name = ?", namespace, loginName)
+	if tx == nil {
+		var err error
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Delete(model, "namespace = ? and login_name = ?", namespace, loginName).Error
 }
 
 // List user approval record with various filtering and sorting options.

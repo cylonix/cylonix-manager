@@ -330,6 +330,7 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 			return nil, common.NewBadParamsErr(err)
 		}
 		email := *params.Email
+		email = strings.ToLower(strings.TrimSpace(email)) // Normalize email
 		logger = logger.WithField(ulog.Email, email)
 		// Check for well-known email domains first
 		if provider := getProviderFromEmail(email); provider != "" {
@@ -410,8 +411,12 @@ func (h *handlerImpl) passwordLogin(
 	*models.LoginSuccess, *models.RedirectURLConfig,
 	*models.ApprovalState, *models.AdditionalAuthInfo, error,
 ) {
-	namespace = strings.ToLower(namespace)
-	username = strings.ToLower(username)
+	namespace = strings.ToLower(strings.TrimSpace(namespace)) // Normalize namespace
+	username = strings.TrimSpace(username) // Normalize username
+	// Lower case the username if it is an email.
+	if strings.Contains(username, "@") {
+		username = strings.ToLower(username)
+	}
 	logger = logger.WithFields(logrus.Fields{
 		ulog.Namespace: namespace,
 		ulog.Username:  username,

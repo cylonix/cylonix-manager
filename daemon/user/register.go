@@ -17,8 +17,9 @@ import (
 func newUserApproval(
 	r *models.UserApprovalInfo, loginNames []string,
 	approverID types.UserID, approverName string, logger *logrus.Entry,
+	okIfRegistered bool,
 ) (*types.UserApproval, error) {
-	exists, registered, err := userLoginExists(r.Namespace, loginNames, true)
+	exists, approval, err := userLoginExists(r.Namespace, loginNames, true)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to check if user exists.")
 		return nil, common.ErrInternalErr
@@ -27,7 +28,10 @@ func newUserApproval(
 		logger.WithError(common.ErrModelUserExists).Errorln("Failed to register new user.")
 		return nil, common.ErrModelUserExists
 	}
-	if registered {
+	if approval != nil {
+		if okIfRegistered {
+			return approval, nil
+		}
 		logger.WithError(common.ErrModelUserRegistered).Errorln("Failed to register new user.")
 		switch string(r.Login.LoginType) {
 		case string(models.LoginTypeEmail):
@@ -45,7 +49,7 @@ func newUserApproval(
 	}
 
 	// A real new user. Add a record for approval book keeping and the user.
-	approval, err := db.NewUserApproval(r, approverID, approverName, "")
+	approval, err = db.NewUserApproval(r, approverID, approverName, "")
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to add user approval record.")
 		return nil, common.ErrInternalErr
@@ -101,11 +105,11 @@ func createNewUserFromRegistration(
 // registration approval. No record found is not an error.
 func userLoginExists(
 	namespace string, loginNames []string, checkRegister bool,
-) (loginExists bool, approvalExists bool, err error) {
+) (loginExists bool, approval *types.UserApproval, err error) {
 	loginExists, err = db.UserLoginExists(namespace, loginNames)
 	if err == nil {
 		if loginExists {
-			return true, true, nil
+			return true, nil, nil
 		}
 	} else {
 		if !errors.Is(err, db.ErrUserNotExists) {
@@ -120,12 +124,12 @@ func userLoginExists(
 		return
 	}
 	for _, loginName := range loginNames {
-		approvalExists, err = db.UserApprovalExists(namespace, loginName)
+		approval, err = db.UserApprovalExists(namespace, loginName)
 		if err != nil {
 			err = common.ErrInternalErr
 			return
 		}
-		if approvalExists {
+		if approval != nil {
 			return
 		}
 	}

@@ -24,7 +24,6 @@ import (
 	"github.com/cylonix/utils"
 	kc "github.com/cylonix/utils/keycloak"
 	ulog "github.com/cylonix/utils/log"
-	"github.com/google/uuid"
 
 	"github.com/sirupsen/logrus"
 )
@@ -426,6 +425,12 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 		namespace = namespaceParam
 	}
 
+	// Default namespace to "default" if adding by sysadmin
+	// To add a sysadmin by another sysadmin, namespaceParam must be set.
+	if namespaceParam == "" && token.IsSysAdmin {
+		namespace = utils.DefaultNamespace
+	}
+
 	_, err := db.GetTenantConfigByNamespace(namespace)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get tenant information.")
@@ -453,23 +458,47 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 		Roles:     &user.Roles,
 		IsAdmin:   user.IsAdmin,
 	}
-	approval, err := newUserApproval(r, loginNames, userID, token.Username, logger)
+	approval, err := newUserApproval(r, loginNames, userID, token.Username, logger, true /* ok if registered */)
 	if err != nil {
+		logger.WithError(err).Errorln("Failed to create user approval record.")
 		return err
 	}
-	err = db.SetUserApprovalState(namespace, approval.ID, userID, token.Username, "", models.ApprovalStateApproved)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to set user approval record approved.")
-		return common.ErrInternalErr
+	if approval.Namespace != namespace && !token.IsSysAdmin {
+		logger.
+			WithField("namespace", namespace).
+			Warnln("Non-sysadmin user trying to add user in other namespace.")
+		return common.ErrModelUnauthorized
+	}
+	if approval.State != types.ApprovalStateApproved {
+		err = db.SetUserApprovalState(namespace, approval.ID, userID, token.Username, "", models.ApprovalStateApproved)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to set user approval record approved.")
+			return common.ErrInternalErr
+		}
 	}
 
-	var id *types.UserID
-	if user.UserID != uuid.Nil {
-		id = optional.P(types.UUIDToID(user.UserID))
+	// Set network domain if not specified
+	networkDomain := optional.String(user.NetworkDomain)
+	if networkDomain == "" {
+		if token.IsSysAdmin {
+			networkDomain, err = generateNetworkDomain(logger, false /* does not want words based */)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to generate network domain.")
+				return common.ErrInternalErr
+			}
+		} else {
+			fromUser := types.User{}
+			if err := db.GetUser(userID, fromUser); err != nil {
+				logger.WithError(err).Errorln("Failed to get user.")
+				return common.ErrInternalErr
+			}
+			networkDomain = optional.String(fromUser.NetworkDomain)
+		}
 	}
+
 	newUser, err := db.AddUser(
 		namespace, user.Email, user.Phone, user.DisplayName, loginSlice,
-		user.Roles, nil, nil, user.NetworkDomain, id,
+		user.Roles, nil, nil, &networkDomain, nil,
 	)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to create new user in db.")
@@ -609,6 +638,20 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 			}
 			cbList = append(cbList, cb)
 		}
+		logins, err := db.GetUserLoginByUserID(ofNamespace, uID)
+		if err != nil {
+			log.WithError(err).Warnln("Get user logins failed")
+			return common.ErrInternalErr
+		}
+		log.WithField("login-count", len(logins)).Debugln("Deleting user approvals.")
+		for _, login := range logins {
+			if err := db.DeleteUserApprovalByLoginName(tx, ofNamespace, login.LoginName); err != nil {
+				log.WithField("login-name", login.LoginName).
+					WithError(err).Errorln("Delete user approval failed")
+				return common.ErrInternalErr
+			}
+			log.WithField("login-name", login.LoginName).Debugln("User approval deleted.")
+		}
 		if err := db.DeleteUser(tx, ofNamespace, uID); err != nil {
 			if !errors.Is(err, db.ErrUserNotExists) {
 				log.WithError(err).Errorln("Delete user in all db failed")
@@ -659,7 +702,7 @@ func (h *handlerImpl) RegisterUser(auth interface{}, requestObject api.RegisterU
 		}
 	}
 	common.LogWithLongDashes("Register user", logger)
-	_, err := newUserApproval(r, []string{r.Login.Login}, types.NilID, "", logger)
+	_, err := newUserApproval(r, []string{r.Login.Login}, types.NilID, "", logger, false /* not ok if registered */)
 	return err
 }
 
@@ -1302,23 +1345,41 @@ func (h *handlerImpl) UserSummary(auth interface{}, requestObject api.GetUserSum
 	}
 
 	if params.Days == nil {
-		deviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain)
+		deviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, false)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get device count.")
 			return nil, common.ErrInternalErr
 		}
+		onlineDeviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, true)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to get online device count.")
+			return nil, common.ErrInternalErr
+		}
 		userCount := int64(1)
 		if ofUserID == nil {
-			userCount, err = db.UserCount(ofNamespace, ofNetworkDomain)
+			userCount, err = db.UserCount(ofNamespace, ofNetworkDomain, false)
 			if err != nil {
 				logger.WithError(err).Errorln("Failed to get user count.")
 				return nil, common.ErrInternalErr
 			}
 		}
+		onlineUserCount, err := db.UserCount(ofNamespace, ofNetworkDomain, true)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to get online user count.")
+			return nil, common.ErrInternalErr
+		}
+		logger.WithFields(logrus.Fields{
+			"device-count":        deviceCount,
+			"online-device-count": onlineDeviceCount,
+			"user-count":          userCount,
+			"online-user-count":   onlineUserCount,
+		}).Debugln("Success")
 		return []models.SummaryStats{
 			{
-				DeviceCount: optional.P(int(deviceCount)),
-				UserCount:   optional.P(int(userCount)),
+				DeviceCount:       optional.P(int(deviceCount)),
+				UserCount:         optional.P(int(userCount)),
+				OnlineDeviceCount: optional.P(int(onlineDeviceCount)),
+				OnlineUserCount:   optional.P(int(onlineUserCount)),
 			},
 		}, nil
 	}
@@ -1704,12 +1765,16 @@ func (h *handlerImpl) GenerateNetworkDomain(auth interface{}, requestObject api.
 		}
 	}
 	wantWordsBased := requestObject.Params.WantWordsBased
-	domain := ""
+	return generateNetworkDomain(logger, wantWordsBased)
+}
+
+func generateNetworkDomain(logger *logrus.Entry, wantWordsBased bool) (string, error) {
 	for i := 0; i < 5; i++ {
+		domain := ""
 		if wantWordsBased {
 			domain = common.GenerateNetworkDomainWithTwoWords()
 		} else {
-			domain = common.GenrateNetworkDomain()
+			domain = common.GenerateNetworkDomain()
 		}
 		inUse, err := db.IsNetworkDomainInUse(domain)
 		if err != nil {

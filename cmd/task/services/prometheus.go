@@ -147,7 +147,7 @@ func (n *namespaceTask) collectNamespaceCounters() {
 	} else {
 		n.summary.LabelCount = &labelCount
 	}
-	userCount, err := db.UserCount(&namespace, nil)
+	userCount, err := db.UserCount(&namespace, nil, false)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get user count from db.")
 	} else {

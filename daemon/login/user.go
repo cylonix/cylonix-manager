@@ -69,13 +69,13 @@ func getUser(
 	// Only allow auto sign up from default namespace users. Other namespaces
 	// has to be approved first.
 	if !utils.IsDefaultNamespace(namespace) {
-		exists := false
-		exists, err = db.UserApprovalExists(namespace, login.LoginName)
+		var approval *types.UserApproval
+		approval, err = db.UserApprovalExists(namespace, login.LoginName)
 		if err != nil {
 			err = fmt.Errorf("failed to check if user approval exists: %w", err)
 			return
 		}
-		if !exists {
+		if approval == nil {
 			userRegisterInfo := newUserApproval(login, roles)
 			if _, err = db.NewUserApproval(userRegisterInfo, types.NilID, "", ""); err != nil {
 				return nil, nil, nil, fmt.Errorf("failed to add user approval: %w", err)
@@ -157,7 +157,7 @@ func getNetworkDomainForNewUser(login *types.UserLogin, log *logrus.Entry) (*str
 	}
 	// Create new network domain for the user.
 	for i := 0; i < maxNetworkDomainRetries; i++ {
-		domain := common.GenrateNetworkDomain()
+		domain := common.GenerateNetworkDomain()
 		inUse, err := db.IsNetworkDomainInUse(domain)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check if network domain is in use: %w", err)

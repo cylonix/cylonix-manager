@@ -80,7 +80,7 @@ test:
 	rm -f ./*/test.db ./*/*/test.db
 
 .PHONY: alpine docker
-RELEASE?=v1.0.2
+RELEASE?=v1.0.3
 VERSION:=$(shell git describe --tags --exact-match 2> /dev/null || \
 				git rev-parse --short HEAD || echo "unknown")
 REVISION:=$(shell git rev-parse HEAD)

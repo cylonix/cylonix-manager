@@ -112,7 +112,7 @@ func (n *NodeHandler) updateNode(wgInfo *types.WgInfo, node *hstypes.Node, nodeK
 		wgInfo.PublicKeyHex != nodeKeyHex ||
 		changed(wgInfo.Addresses, addresses) {
 		update = &types.WgInfo{}
-		if currentNodeID != nodeID {
+		if currentNodeID != nodeID && nodeID != uint64(0) {
 			update.NodeID = &nodeID
 		}
 		if wgInfo.Name != hostname {
@@ -378,6 +378,9 @@ func (n *NodeHandler) PostAdd(node *hstypes.Node) error {
 	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
 	if err != nil {
 		return err
+	}
+	if node.ID.Uint64() == 0 {
+		return fmt.Errorf("node ID is 0")
 	}
 	id := uint64(node.ID)
 	update := types.WgInfo{NodeID: &id}
