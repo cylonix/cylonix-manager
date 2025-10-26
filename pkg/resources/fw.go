@@ -45,7 +45,7 @@ func (s *ResourceService) createGlobalTaiResource(kv *mvccpb.KeyValue) error {
 	}
 	s.addGlobalTaiResource(res.User, res.ID, res)
 	s.log.WithFields(logrus.Fields{
-		ulog.Tai:       res.InstanceName,
+		ulog.Fw:       res.InstanceName,
 		ulog.Namespace: res.InstanceID,
 	}).Infoln("load global global tai resource")
 
@@ -58,7 +58,7 @@ func (s *ResourceService) deleteGlobalTaiResource(resUUID string) error {
 			if res.ID == resUUID {
 				delete(resMap, resUUID)
 				s.log.WithFields(logrus.Fields{
-					ulog.Tai:       res.InstanceName,
+					ulog.Fw:       res.InstanceName,
 					ulog.Namespace: res.InstanceID,
 				}).Infoln("delete tai resource by etcd watch")
 				break

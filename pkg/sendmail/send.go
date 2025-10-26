@@ -62,7 +62,7 @@ func SetInstance(i SendmailInterface) {
 }
 
 func Init(viper *gviper.Viper, logger *logrus.Entry) error {
-	config.Init(viper)
+	config.Init(viper, logger)
 	if instance != nil {
 		return fmt.Errorf("instance already set to type: %T", instance)
 	}
