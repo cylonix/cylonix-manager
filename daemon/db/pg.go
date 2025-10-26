@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/cylonix/utils/postgres"
 	"gorm.io/gorm"
@@ -14,14 +15,27 @@ import (
 
 func filter(pg *gorm.DB, filterBy, filterValue *string) *gorm.DB {
 	if filterBy != nil && filterValue != nil && *filterBy != "" && *filterValue != "" {
-		pg = pg.Where(*filterBy+" like ?", like(*filterValue))
+		by := strings.Split(*filterBy, ",")
+		value := strings.Split(*filterValue, ",")
+		if len(by) != len(value) {
+			return pg
+		}
+		for i := range by {
+			pg = pg.Where(by[i]+" like ?", like(value[i]))
+		}
 	}
 	return pg
 }
 
-func filterExact(pg *gorm.DB, filterBy *string, filterValue interface{}) *gorm.DB {
-	if filterBy != nil && filterValue != nil && *filterBy != "" {
-		pg = pg.Where(*filterBy+" = ?", filterValue)
+func filterExact(pg *gorm.DB, filterBy *string, filterValues []interface{}) *gorm.DB {
+	if filterBy != nil && filterValues != nil && *filterBy != "" {
+		by := strings.Split(*filterBy, ",")
+		if len(by) != len(filterValues) {
+			return pg
+		}
+		for i := range by {
+			pg = pg.Where(by[i]+" = ?", filterValues[i])
+		}
 	}
 	return pg
 }

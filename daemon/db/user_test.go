@@ -151,7 +151,7 @@ func TestUserDB(t *testing.T) {
 		assert.Equal(t, 2, len(userLogins))
 	}
 
-	userList, total, err := GetUserList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	userList, total, err := GetUserList(&namespace, false, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if assert.Nil(t, err) {
 		assert.Equal(t, 1, len(userList))
 		assert.Equal(t, int(total), len(userList))

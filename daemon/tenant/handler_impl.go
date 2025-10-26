@@ -284,7 +284,7 @@ func (h *handlerImpl) DeleteConfigs(auth interface{}, requestObject api.DeleteTe
 	token, _, userID, logger := common.ParseToken(auth, "delete-tenant-configs", "Delete tenant configs", h.logger)
 
 	// Only sys admin user can delete tenant.
-	if !token.IsSysAdmin {
+	if token == nil || !token.IsSysAdmin {
 		return common.ErrModelUnauthorized
 	}
 	idList := types.UUIDListToIDList(requestObject.Body)

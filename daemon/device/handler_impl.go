@@ -10,6 +10,7 @@ import (
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/fwconfig"
+	"cylonix/sase/pkg/optional"
 	"cylonix/sase/pkg/vpn"
 	"errors"
 
@@ -81,25 +82,40 @@ func (h *handlerImpl) GetDevices(auth interface{}, requestObject api.GetDevicesR
 		}, nil
 	}
 
-	var targetUserID *types.UserID
-	if params.UserID != nil && *params.UserID != "" {
-		id, err := types.ParseID(*params.UserID)
-		if err != nil {
-			logger.WithError(err).Errorln("Failed to get parse user ID.")
-			return nil, common.NewBadParamsErr(err)
-		}
-		targetUserID = &id
-	} else if !token.IsAdminUser {
-		targetUserID = &userID
-	}
-
 	var namespaceP *string
 	if !token.IsSysAdmin {
 		namespaceP = &namespace
 	}
+	var targetUserIDs []types.UserID
+	if token.IsAdminUser {
+		if params.UserID != nil && *params.UserID != "" {
+			id, err := types.ParseID(*params.UserID)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get parse user ID.")
+				return nil, common.NewBadParamsErr(err)
+			}
+			targetUserIDs = append(targetUserIDs, id)
+		}
+		if params.Username != nil && *params.Username != "" {
+			logins, err := db.GetLoginsByLoginNameLike(namespaceP, *params.Username)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user IDs by username.")
+				return nil, common.ErrInternalErr
+			}
+			for _, login := range logins {
+				targetUserIDs = append(targetUserIDs, login.UserID)
+			}
+		}
+	} else {
+		targetUserIDs = []types.UserID{userID}
+	}
+
 	devices, total, err := db.ListDevice(
-		namespaceP, targetUserID, params.Capability,
-		params.FilterBy, params.FilterValue, params.SortBy, params.SortDesc,
+		namespaceP, targetUserIDs,
+		optional.Bool(params.OnlineOnly),
+		params.Capability,
+		params.FilterBy, params.FilterValue,
+		params.SortBy, params.SortDesc,
 		params.Page, params.PageSize,
 	)
 	if err != nil {

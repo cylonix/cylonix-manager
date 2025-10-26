@@ -9,6 +9,7 @@ import (
 	"cylonix/sase/pkg/optional"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cylonix/utils/postgres"
 	"gorm.io/gorm"
@@ -129,7 +130,7 @@ func DeleteUserDevices(tx *gorm.DB, namespace string, userID types.UserID, devic
 	return tx.Commit().Error
 }
 
-func ListDevice(namespace *string, userID *types.UserID,
+func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
 	capability, filterBy, filterValue, sortBy, sortDesc *string,
 	page, pageSize *int,
 ) ([]types.Device, int64, error) {
@@ -141,8 +142,8 @@ func ListDevice(namespace *string, userID *types.UserID,
 	if namespace != nil {
 		db = db.Where("namespace = ?", *namespace)
 	}
-	if userID != nil {
-		db = db.Where("user_id = ?", *userID)
+	if len(userIDs) > 0 {
+		db = db.Where("user_id IN ?", userIDs)
 	}
 	if capability != nil && *capability != "" {
 		cid := []types.DeviceID{}
@@ -155,6 +156,9 @@ func ListDevice(namespace *string, userID *types.UserID,
 			return nil, 0, err
 		}
 		db = db.Where("device_id in ?", cid)
+	}
+	if onlineOnly {
+		db = db.Where("last_seen > ?", time.Now().Unix()-180)
 	}
 	db = filter(db, filterBy, filterValue)
 
@@ -451,7 +455,6 @@ func WgInfoByIP(namespace, ip string) (*types.WgInfo, error) {
 func WgInfoByMachineKey(namespace string, userID types.UserID, machineKey string) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
 	if err := postgres.SelectFirst(ret, &types.WgInfo{
-		Namespace:  namespace,
 		UserID:     userID,
 		MachineKey: &machineKey,
 	}); err != nil {
@@ -459,6 +462,9 @@ func WgInfoByMachineKey(namespace string, userID types.UserID, machineKey string
 			return nil, ErrDeviceWgInfoNotExists
 		}
 		return nil, err
+	}
+	if ret.Namespace != namespace {
+		return nil, ErrNamespaceMismatch
 	}
 	return ret, nil
 }

@@ -514,3 +514,25 @@ func GetLoginName(namespace string, userID types.UserID) (string, error) {
 	}
 	return logins[0].LoginName, nil
 }
+
+func GetLoginsByLoginNameLike(namespace *string, loginName string) ([]*types.UserLogin, error) {
+	if loginName == "" {
+		return []*types.UserLogin{}, nil
+	}
+	tx, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	tx = tx.Model(&types.UserLogin{})
+	if namespace != nil {
+		tx = tx.Where("namespace = ?", *namespace)
+	}
+	result := []*types.UserLogin{}
+	if err := tx.Where("login_name like ?", like(loginName)).Find(&result).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []*types.UserLogin{}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}

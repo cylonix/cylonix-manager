@@ -444,6 +444,7 @@ func (c *WgClient) toNode(namespace string) (w *types.WgNode, err error) {
 		Name:         c.wgName,
 		PublicKeyHex: c.pubKeyHex,
 		IsOnline:     optional.BoolP(c.active),
+		LastSeen:     time.Now().Unix(),
 	}
 	if w.Addresses, err = types.ParsePrefixes([]string{c.IPAddress() + "/32"}); err != nil {
 		return
@@ -456,7 +457,7 @@ func (c *WgClient) toNode(namespace string) (w *types.WgNode, err error) {
 	}
 	return
 }
-func (c *WgClient) addNode(namespace string) error {
+func (c *WgClient) addNode(namespace string, log *logrus.Entry) error {
 	current, err := c.toNode(namespace)
 	if err != nil {
 		return fmt.Errorf("failed to parse client to wg node: %w", err)
@@ -475,9 +476,15 @@ func (c *WgClient) addNode(namespace string) error {
 		c.wgNodeID = existing.ID
 		node, err := vpn.GetNode(namespace, &user.ID, existing.NodeID)
 		if err != nil {
+			log.WithError(err).
+				WithField("node_id", existing.NodeID).
+				Errorln("Failed to get wg node from vpn")
 			return err
 		}
 		if node == nil {
+			log.WithField("user_id", user.ID).
+				WithField("node_id", existing.NodeID).
+				Infoln("Creating new wg node")
 			nodeID, err := vpn.CreateWgNode(&user.UserBaseInfo, current)
 			if err != nil {
 				return err
@@ -487,7 +494,19 @@ func (c *WgClient) addNode(namespace string) error {
 		}
 
 		if existing.Equal(current) {
-			return nil
+			// Node last seen may need to be updated if:
+			// - Node is now online but was offline before with non-nil last seen
+			// - Node is now offline but was online before with nil last seen
+			if (node.LastSeen != nil && !optional.Bool(current.IsOnline)) ||
+				(node.LastSeen == nil && optional.Bool(current.IsOnline)) {
+				return nil
+			}
+			log.WithFields(logrus.Fields{
+				"last_seen_is_nil": node.LastSeen == nil,
+				"is_online": optional.Bool(current.IsOnline),
+			}).Debugln("Wg node unchanged but needs to update node last seen")
+		} else {
+			log.Debugf("Wg node changed old=%+v new=%+v", existing, current)
 		}
 		if err = vpn.UpdateWgNode(&user.UserBaseInfo, current); err == nil {
 			err = db.UpdateWgNode(existing.ID, current)
@@ -934,10 +953,9 @@ func (wg *WgService) handleWgNamespaceResourceChange(namespace string) error {
 			pubKeyBase64: pkBase64,
 			aps:          aps,
 		}
-		_log.Traceln("client aps", aps)
 
 		// Create and save to DB if necessary.
-		if err := client.addNode(namespace); err != nil {
+		if err := client.addNode(namespace, _log); err != nil {
 			_log.WithError(err).Errorln("Failed to add/update wg node.")
 			continue
 		}

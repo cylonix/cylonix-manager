@@ -661,9 +661,7 @@ func (n *NamespaceInfo) IsFwServiceSupported() bool {
 	}
 }
 func (n *NamespaceInfo) IsGatewaySupported() bool {
-	// FIXME
-	return n != nil
-	if n.Mode == nil {
+	if n == nil || n.Mode == nil {
 		return false
 	}
 	switch *n.Mode {
@@ -696,9 +694,6 @@ func IsGatewaySupported(namespace string, userID types.UserID, deviceID types.De
 
 	value, ok := nsNameMapToFullInfo[namespace]
 	if !ok {
-		return false
-	}
-	if namespace != "personal-users2" {
 		return false
 	}
 	n := (*NamespaceInfo)(value)

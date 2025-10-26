@@ -71,6 +71,7 @@ func (w *WgNode) Equal(w1 *WgNode) bool {
 	return w.NodeID == w1.NodeID &&
 		w.Namespace == w1.Namespace &&
 		w.Name == w1.Name &&
+		w.PublicKeyHex == w1.PublicKeyHex &&
 		optional.Bool(w.IsOnline) == optional.Bool(w1.IsOnline) &&
 		optional.String(w.DNSName) == optional.String(w1.DNSName) &&
 		slices.Equal(w.Addresses, w1.Addresses) &&

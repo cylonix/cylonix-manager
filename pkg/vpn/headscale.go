@@ -293,14 +293,34 @@ func DeleteNode(nodeID uint64) error {
 
 // GetNode returns nil if node does not exist.
 func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, error) {
-	_, list, err := ListNodes(namespace, nil, userID, []uint64{nodeID}, nil, nil, nil, nil, nil, nil)
+	if headscale == nil {
+		return nil, ErrHeadscaleNotInitialized
+	}
+	request := &v1.GetNodeRequest{
+		NodeId:    nodeID,
+	}
+	client := getHsClient()
+	ctx, cancel := newHsClientContext()
+	defer cancel()
+	response, err := client.GetNode(ctx, request)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			logger.WithField("node_id", nodeID).Debug("Node not found in headscale")
+			return nil, nil
+		}
+		return nil, err
+	}
+	node, err := hstypes.ParseProtoNode(response.Node)
 	if err != nil {
 		return nil, err
 	}
-	if len(list) <= 0 {
-		return nil, nil
+	if namespace != "" && node.Namespace != namespace {
+		return nil, fmt.Errorf("node namespace mismatch: expected %v, got %v", namespace, node.Namespace)
 	}
-	return list[0], nil
+	if userID != nil && node.User.Name != userID.String() {
+		return nil, fmt.Errorf("node userID mismatch: expected %v, got %v", userID.String(), node.User.Name)
+	}
+	return node, nil
 }
 
 func ListNodes(
@@ -396,6 +416,19 @@ func wgNodeToProtoNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*v1.Node, 
 	if err != nil {
 		return nil, err
 	}
+	var lastSeen *timestamppb.Timestamp
+	if wgNode.LastSeen != 0 && !optional.Bool(wgNode.IsOnline) {
+		lastSeen = timestamppb.New(time.Unix(wgNode.LastSeen, 0))
+	}
+
+	logger.WithFields(logrus.Fields{
+			"namespace": wgNode.Namespace,
+			"node_id":   wgNode.NodeID,
+			"node":      wgNode.Name,
+			"online":    optional.Bool(wgNode.IsOnline),
+			"last_seen": wgNode.LastSeen,
+		}).
+		Debug("Updating wg node")
 
 	// Stay below version 26 as we cannot do DoH on wg node yet.
 	// https://github.com/tailscale/tailscale/blob/3ae6f898cfdb58fd0e30937147dd6ce28c6808dd/tailcfg/tailcfg.go#L51)
@@ -415,6 +448,7 @@ func wgNodeToProtoNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*v1.Node, 
 		WireguardOnly:  optional.BoolP(true),
 		Endpoints:      types.ToStringSlice(wgNode.Endpoints),
 		Online:         optional.Bool(wgNode.IsOnline),
+		LastSeen:       lastSeen,
 		Routes:         routes,
 		CapVersion:     &capVersion,
 	}, nil

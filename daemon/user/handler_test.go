@@ -89,7 +89,7 @@ func addTenantAndAdminToken(namespace string) (*utils.UserTokenData, error) {
 func delTenantAndAdminToken(t *testing.T, namespace string, adminToken *utils.UserTokenData) {
 	assert.Nil(t, adminToken.Delete())
 	if !assert.Nil(t, db.DeleteUserTierByName(namespace+"-tier")) {
-		users, _, err := db.GetUserList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		users, _, err := db.GetUserList(&namespace, false, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Errorf("Failed to get user list for namespace %s: %v", namespace, err)
 		}

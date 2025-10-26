@@ -260,7 +260,7 @@ func (s *oauthSession) setTenant() error {
 				s.logger.WithError(err).Errorln("Failed to create sysadmin config.")
 				return common.ErrInternalErr
 			}
-			// Personal-users tenant may need to be created if not yet setup.
+			// Default tenant may need to be created if not yet setup.
 			if s.namespace == utils.DefaultNamespace {
 				tenant, err = s.NewDefaultTenant()
 				if err == nil {

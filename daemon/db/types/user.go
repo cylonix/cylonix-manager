@@ -191,6 +191,10 @@ func (u *User) ToModel() *models.User {
 	if len(u.Roles) > 0 {
 		roles = u.Roles
 	}
+	if u.IsAdminUser != nil && *u.IsAdminUser &&
+		!slices.Contains(roles, string(models.PredefinedRolesNamespaceAdmin)) {
+		roles = append(roles, string(models.PredefinedRolesNamespaceAdmin))
+	}
 	return &models.User{
 		Namespace:         u.Namespace,
 		UserID:            u.ID.UUID(),

@@ -25,7 +25,8 @@ type UserMetricCount struct {
 }
 
 func GetUserList(
-	namespace *string, filterBy, filterValue, contain, sortBy, sortDesc *string,
+	namespace *string, onlineOnly bool, 
+	filterBy, filterValue, contain, sortBy, sortDesc *string,
 	wgEnable *bool, forUserIDs []types.UserID, page, pageSize *int,
 ) ([]*types.User, int64, error) {
 	pg, err := postgres.Connect()
@@ -46,6 +47,9 @@ func GetUserList(
 	if namespace != nil {
 		pg = pg.Where("namespace = ? ", *namespace)
 	}
+	if onlineOnly {
+		pg = pg.Where("last_seen > ?", time.Now().Unix()-180)
+	}
 	if filterBy != nil && *filterBy != "" && filterValue != nil {
 		if *filterBy == "is_admin_user" || *filterBy == "is_sys_admin" {
 			f := false
@@ -57,7 +61,7 @@ func GetUserList(
 			default:
 				return nil, 0, fmt.Errorf("invalid value for filter '%s': %s", *filterBy, *filterValue)
 			}
-			pg = filterExact(pg, filterBy, f)
+			pg = filterExact(pg, filterBy, []interface{}{f})
 		} else {
 			pg = filter(pg, filterBy, filterValue)
 		}
@@ -128,6 +132,17 @@ func GetUser(userID types.UserID, rst interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func GetUserByID(namespace *string, userID types.UserID) (*types.User, error) {
+	user := &types.User{}
+	if err := GetUser(userID, user); err != nil {
+		return nil, err
+	}
+	if namespace != nil && user.Namespace != *namespace {
+		return nil, ErrNamespaceMismatch
+	}
+	return user, nil
 }
 
 func GetUserBaseInfoList(namespace string, userIDs []types.UserID) ([]types.UserBaseInfo, error) {
@@ -779,7 +794,6 @@ func UpdateUser(namespace string, userID types.UserID, update *models.UserUpdate
 		}
 	}
 	if updateUserBaseInfo {
-		ubUpdate["updated_at"] = time.Now().Unix()
 		model := &types.UserBaseInfo{Model: types.Model{ID: userID}, Namespace: namespace}
 		if err := tx.Model(model).Updates(ubUpdate).Error; err != nil {
 			return err
@@ -1072,20 +1086,28 @@ func AddUserRole(namespace string, userID types.UserID, role string) error {
 	if user.Namespace != namespace {
 		return fmt.Errorf("%w: namespace is '%v', want '%v'", ErrNamespaceMismatch, user.Namespace, namespace)
 	}
-	if role == string(models.PredefinedRolesNetworkAdmin) {
-		role = types.NetworkDomainAdminRole
-	}
-	if role == string(models.PredefinedRolesNetworkOwner) {
-		role = types.NetworkDomainOwnerRole
-	}
-	roles := append(user.Roles, role)
 	tx, err := getPGconn()
 	if err != nil {
 		return err
 	}
-	return tx.Model(&types.User{}).
-		Where("namespace = ? and id = ?", namespace, userID).
-		Update("roles", roles).Error
+	tx = tx.Model(&types.User{}).
+			Where("namespace = ? and id = ?", namespace, userID)
+	switch role {
+	case string(models.PredefinedRolesNamespaceAdmin):
+		if user.IsAdminUser != nil && *user.IsAdminUser {
+			return nil
+		}
+		return tx.Update("is_admin_user", optional.P(true)).Error
+	case string(models.PredefinedRolesNetworkAdmin):
+		role = types.NetworkDomainAdminRole
+	case string(models.PredefinedRolesNetworkOwner):
+		role = types.NetworkDomainOwnerRole
+	}
+	if slices.Contains(user.Roles, role) {
+		return nil
+	}
+	roles := append(user.Roles, role)
+	return tx.Update("roles", roles).Error
 }
 func DelUserRole(namespace string, userID types.UserID, role string) error {
 	if role == "" {
@@ -1101,19 +1123,23 @@ func DelUserRole(namespace string, userID types.UserID, role string) error {
 	if user.Namespace != namespace {
 		return fmt.Errorf("%w: namespace is '%v', want '%v'", ErrNamespaceMismatch, user.Namespace, namespace)
 	}
-	if role == string(models.PredefinedRolesNetworkAdmin) {
+	tx, err := getPGconn()
+	if err != nil {
+		return err
+	}
+	tx = tx.Model(&types.User{}).
+			Where("namespace = ? and id = ?", namespace, userID)
+	switch role {
+	case string(models.PredefinedRolesNamespaceAdmin):
+		return tx.Update("is_admin_user", optional.P(false)).Error
+	case string(models.PredefinedRolesNetworkAdmin):
 		role = types.NetworkDomainAdminRole
+	case string(models.PredefinedRolesNetworkOwner):
+		role = types.NetworkDomainOwnerRole
 	}
 	if !slices.Contains(user.Roles, role) {
 		return nil
 	}
 	roles := slices.Delete(user.Roles, slices.Index(user.Roles, role), slices.Index(user.Roles, role)+1)
-
-	tx, err := getPGconn()
-	if err != nil {
-		return err
-	}
-	return tx.Model(&types.User{}).
-		Where("namespace = ? and id = ?", namespace, userID).
-		Update("roles", roles).Error
+	return tx.Update("roles", roles).Error
 }

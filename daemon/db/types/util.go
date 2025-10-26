@@ -67,6 +67,9 @@ func ParseAddrPorts(ss []string) ([]netip.AddrPort, error) {
 	return FromStringSlice(ss, netip.ParseAddrPort)
 }
 func SliceMap[T1 any, T2 any](from []T1, mapFn func(T1) (T2, error)) ([]T2, error) {
+	if from == nil {
+		return nil, nil
+	}
 	list := make([]T2, 0, len(from))
 	for _, v := range from {
 		to, err := mapFn(v)

@@ -113,24 +113,34 @@ func CreateUser(
 }
 
 func NamespaceRootUserNetworkDomain(namespace string) string {
-	return "root." + namespace
+	return "system-internal." + namespace
 }
 
 func GetOrCreateNamespaceRootUser(namespace string) (*types.User, error) {
+	// Try to get "root" user first
 	username := "root"
-	networkDomain := NamespaceRootUserNetworkDomain(namespace)
 	user, err := db.GetUserByLoginName(namespace, username)
+	if err == nil {
+		return user, nil
+	}
+	// Try to get "system-internal" user next
+	username = "system-internal"
+	user, err = db.GetUserByLoginName(namespace, username)
 	if err != nil {
 		if errors.Is(err, db.ErrUserNotExists) || errors.Is(err, db.ErrUserLoginNotExists) {
-			user, err = db.AddUser(namespace, username+"@"+namespace, "", username, []types.UserLogin{
-				{
-					LoginName:   username,
-					LoginType:   types.LoginTypeUsername,
-					DisplayName: username,
-					Namespace:   namespace,
-					Credential:  utils.NewPassword(),
+			networkDomain := NamespaceRootUserNetworkDomain(namespace)
+			user, err = db.AddUser(
+				namespace, username+"@"+namespace+".internal", "",
+				"System Internal", []types.UserLogin{
+					{
+						LoginName:   username,
+						LoginType:   types.LoginTypeUsername,
+						DisplayName: username,
+						Namespace:   namespace,
+						Credential:  utils.NewPassword(),
+					},
 				},
-			}, nil, nil, nil, &networkDomain, nil)
+			nil, nil, nil, &networkDomain, nil)
 		}
 	}
 	return user, err

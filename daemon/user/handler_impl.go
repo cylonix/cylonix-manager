@@ -53,47 +53,50 @@ func (h *handlerImpl) parseToken(
 // GetUserList returns common.ErrModelUserNotExists if there is no match.
 func (h *handlerImpl) GetUserList(auth interface{}, requestObject api.GetUserListRequestObject) (*models.UserList, error) {
 	token, namespace, userID, logger := h.parseToken(auth, "get-user", "Get user request")
+	if token == nil {
+		logger.Debugln("invalid token")
+		return nil, common.ErrModelUnauthorized
+	}
 
 	idList := types.UUIDListToIDList(requestObject.Body)
 	params := requestObject.Params
+
+	var namespaceP *string
+	if !token.IsSysAdmin {
+		namespaceP = &namespace
+	}
+
 	// Only admin user can get other user's information.
-	if token == nil || !token.IsAdminUser {
+	if !token.IsAdminUser {
 		if len(idList) != 1 || idList[0] != userID {
 			return nil, common.ErrModelUnauthorized
 		}
-	}
-
-	// Don't include devices et al if WithDetails is not set.
-	withDetails := false
-	if params.WithDetails != nil {
-		withDetails = *params.WithDetails
-	}
-
-	var total int64
-	var err error
-	var userList []*types.User
-
-	if len(idList) == 1 {
-		// Single user ID fetch does not support all other options.
-		targetUserID := idList[0]
-		if userID != targetUserID {
-			logger = logger.WithField("target-user-id", targetUserID.String())
-		}
-		user, e := db.GetUserFast(namespace, targetUserID, withDetails)
-		total = 1
-		userList = []*types.User{user}
-		err = e
 	} else {
-		var namespaceP *string
-		if !token.IsSysAdmin {
-			namespaceP = &namespace
+		if params.Username != nil && *params.Username != "" {
+			logins, err := db.GetLoginsByLoginNameLike(namespaceP, *params.Username)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user logins.")
+				return nil, common.ErrInternalErr
+			}
+			if len(logins) == 0 {
+				return &models.UserList{
+					Total: 0,
+					Users: []models.User{},
+				}, nil
+			}
+			for _, l := range logins {
+				idList = append(idList, l.UserID)
+			}
 		}
-		userList, total, err = db.GetUserList(namespaceP,
-			params.FilterBy, params.FilterValue, nil,
-			params.SortBy, params.SortDesc, nil, idList, params.Page,
-			params.PageSize,
-		)
 	}
+
+	userList, total, err := db.GetUserList(
+		namespaceP,
+		optional.Bool(params.OnlineOnly),
+		params.FilterBy, params.FilterValue, nil,
+		params.SortBy, params.SortDesc, nil, idList, params.Page,
+		params.PageSize,
+	)
 	if err != nil {
 		if errors.Is(err, db.ErrUserNotExists) {
 			return nil, common.ErrModelUserNotExists
