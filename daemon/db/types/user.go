@@ -132,6 +132,7 @@ type User struct {
 	IsSysAdmin            *bool
 	MustChangePassword    *bool
 	WgEnabled             *bool
+	GatewayEnabled        *bool
 
 	// Tier
 	UserTierID *ID       `gorm:"type:uuid"`
@@ -214,6 +215,7 @@ func (u *User) ToModel() *models.User {
 			AdvertiseDefaultRoute: optional.BoolP(optional.Bool(u.AdvertiseDefaultRoute)),
 			MeshVpnMode:           &mode,
 			WgEnabled:             optional.BoolP(optional.Bool(u.WgEnabled)),
+			GatewayEnabled:        optional.BoolP(optional.Bool(u.GatewayEnabled)),
 		},
 		Attributes: ma,
 		UserTier:   u.UserTier.ToModel(),
@@ -268,6 +270,7 @@ func (u *User) FromModel(namespace string, m *models.User) *User {
 		LastSeen:              optional.Int64(m.LastSeen),
 		MeshVpnMode:           mode,
 		WgEnabled:             optional.CopyBoolP(m.NetworkSetting.WgEnabled),
+		GatewayEnabled:        optional.CopyBoolP(m.NetworkSetting.GatewayEnabled),
 		AdvertiseDefaultRoute: optional.CopyBoolP(m.NetworkSetting.AdvertiseDefaultRoute),
 		NetworkDomain:         optional.CopyP(m.NetworkDomain),
 		UserTierID:            userTierID,

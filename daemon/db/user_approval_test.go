@@ -81,18 +81,18 @@ func TestUserApproval(t *testing.T) {
 	}
 
 	// Update
-	err = SetUserApprovalState(namespace, types.NilID, approverID, approverName, note, models.ApprovalStateRejected)
+	err = SetUserApprovalState(nil, namespace, types.NilID, approverID, approverName, note, models.ApprovalStateRejected)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, ErrBadParams)
 	}
-	err = SetUserApprovalState(namespace, ids[0], approverID, approverName, note, models.ApprovalStateRejected)
+	err = SetUserApprovalState(nil, namespace, ids[0], approverID, approverName, note, models.ApprovalStateRejected)
 	assert.Nil(t, err)
 	ua, err := GetUserApproval(namespace, ids[0])
 	if assert.Nil(t, err) && assert.NotNil(t, ua) {
 		assert.Equal(t, types.ApprovalStateRejected, ua.State)
 	}
 	// Update with bad/non-existing ID is a no-op. Hence not an error.
-	err = SetUserApprovalState(namespace, badID, approverID, approverName, note, models.ApprovalStateRejected)
+	err = SetUserApprovalState(nil, namespace, badID, approverID, approverName, note, models.ApprovalStateRejected)
 	assert.Nil(t, err)
 
 	// List

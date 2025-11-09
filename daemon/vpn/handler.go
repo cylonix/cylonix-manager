@@ -129,8 +129,15 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 	if err := db.UpdateDeviceLastSeen(namespace, userID, deviceID, now); err != nil {
 		log.WithError(err).Errorln("update device last seen failed")
 	}
+
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		log.WithError(err).Errorln("user not found")
+		return nil, nil, err
+	}
+
 	peers, onlinePeers := []uint64{}, []uint64{}
-	if common.IsGatewaySupported(namespace, userID, deviceID) {
+	if common.IsGatewaySupported(namespace, user, userID, deviceID) {
 		wgPeers, onlineWgs, err := s.getWgGatewayPeers(m)
 		if err != nil {
 			return nil, nil, err
@@ -139,7 +146,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		peers = append(peers, wgPeers...)
 		onlinePeers = onlineWgs
 	}
-	list, err := s.getApprovedPeers(namespace, userID, deviceID, log)
+	list, err := s.getApprovedPeers(namespace, userID, user, deviceID, log)
 	if err != nil {
 		log.WithError(err).Errorln("Failed to list approved peers")
 		return nil, nil, err
@@ -158,16 +165,12 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 func (s *VpnService) getApprovedPeers(
 	namespace string,
 	userID types.UserID,
+	user *types.User,
 	deviceID types.DeviceID,
 	logger *logrus.Entry,
 ) ([]uint64, error) {
 	log := logger.WithField(ulog.SubHandle, "get-approved-peers").WithField(ulog.DeviceID, deviceID)
 	common.LogWithLongDashes("Get approved peers", log)
-	user, err := db.GetUserFast(namespace, userID, false)
-	if err != nil {
-		log.WithError(err).Errorln("user not found")
-		return nil, err
-	}
 
 	mode := optional.String(user.MeshVpnMode)
 	if mode == "" {
@@ -238,10 +241,9 @@ func getWgInfoWithMachineKey(namespace string, userID types.UserID, machineKey k
 	return db.WgInfoByMachineKey(namespace, userID, string(v))
 }
 
-// Rotate the node public key. This will update the device's wg info and the
-// public key of the wg clients for this device.
+// Rotate the node public key in wireguard gateways.
 // Note, caller to update the node key in DB along updating other node properties.
-func (s *VpnService) RotateNodeKey(
+func (s *VpnService) RotateNodeKeyInGateway(
 	m *types.WgInfo,
 	machineKey key.MachinePublic,
 	nodeKey key.NodePublic,
@@ -256,24 +258,22 @@ func (s *VpnService) RotateNodeKey(
 			"new-node-key": nodeKeyHex,
 		},
 	)
-	if !common.IsGatewaySupported(m.Namespace, m.UserID, m.DeviceID) {
+	logger = logger.WithField(ulog.WgName, m.WgName)
+	if m.WgName == "" {
+		logger.Debugln("No wg gateway assigned to the device, skip rotate node key in gateway.")
 		return nil
 	}
-	update := types.WgInfo{
-		PublicKeyHex: nodeKeyHex,
-	}
-	logger = logger.WithField(ulog.WgName, m.WgName)
-	if err := db.UpdateWgInfo(m.DeviceID, &update); err != nil {
-		logger.WithError(err).Errorln("Failed to update new key to db.")
+
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to fetch user from the database")
 		return err
 	}
-	// Only update the key to the wg server the machine is connected to.
-	if m.WgName == "" {
-		// TODO: remove if to support routed wg networks.
-		return common.CreateDeviceInAllWgAgents(m.ToModel())
+	if !common.IsGatewaySupported(m.Namespace, user, userID, m.DeviceID) {
+		return nil
 	}
 	m.PublicKeyHex = nodeKeyHex
-	if err := common.WgUpdateDevicePublicKey(m.ToModel()); err != nil {
+	if err = common.WgUpdateDevicePublicKey(m.ToModel()); err != nil {
 		log := logger.WithField(ulog.WgName, m.WgName)
 		log.WithError(err).Errorln("Failed to update new key to wg client.")
 		if errors.Is(err, common.ErrWgClientOffline) ||
@@ -293,7 +293,7 @@ func (s *VpnService) RotateNodeKey(
 		return err
 	}
 
-	logger.Infoln("Rotated node key.")
+	logger.Infoln("Rotated node key in wg gateway successfully.")
 	return nil
 }
 
@@ -332,10 +332,6 @@ func (s *VpnService) DerperServers(namespace string) (*map[int]*tailcfg.DERPRegi
 	}
 
 	return &cfg.Servers, nil
-}
-
-func (s *VpnService) IsGatewaySupported(namespace string, userID types.UserID, deviceID types.DeviceID) bool {
-	return common.IsGatewaySupported(namespace, userID, deviceID)
 }
 
 func (s *VpnService) WgID(namespace, wgName string) (string, error) {
@@ -470,9 +466,15 @@ func (s *VpnService) NewDevice(
 		}
 	}
 
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		log.WithError(err).Errorln("Failed to get user from db")
+		return nil, err
+	}
+
 	wgID := ""
 	if wgName != "" {
-		if common.IsGatewaySupported(namespace, userID, types.NilID) {
+		if common.IsGatewaySupported(namespace, user, userID, types.NilID) {
 			wgClient, err := common.GetAccessPoint(namespace, wgName, lat, lng)
 			if wgClient == nil || err != nil {
 				err = fmt.Errorf("failed to get wg: %w", err)
@@ -486,8 +488,9 @@ func (s *VpnService) NewDevice(
 			}
 			wgID = wgClient.ID()
 		} else {
-			log.Debugln("wg-gateway is not supported.")
-			wgName = ""
+			err = fmt.Errorf("wg-gateway is not supported for the user")
+			log.WithError(err).Errorln("Failed to create new device.")
+			return nil, err
 		}
 	}
 	deviceID, err := types.NewID()
@@ -526,7 +529,7 @@ func (s *VpnService) NewDevice(
 	}
 	log.Infoln("Device added to db")
 
-	if !common.IsGatewaySupported(namespace, userID, deviceID) {
+	if !common.IsGatewaySupported(namespace, user, userID, deviceID) {
 		return device, nil
 	}
 

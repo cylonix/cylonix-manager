@@ -32,7 +32,10 @@ var (
 // - ErrSamePassword if password not changed.
 // - ErrInvalidLoginType if it is not a password login
 // - Other errors if failed to hash or save to DB.
-func UpdateLoginUsernamePassword(l *types.UserLogin, username, password string) error {
+func UpdateLoginUsernamePassword(
+	tx *gorm.DB,
+	l *types.UserLogin, username, password string,
+) error {
 	if l.Password() == "" {
 		return ErrInvalidLoginType
 	}
@@ -54,9 +57,14 @@ func UpdateLoginUsernamePassword(l *types.UserLogin, username, password string) 
 		LoginName:  username,
 		Credential: credential,
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var err error
+	var commit bool
+	if tx == nil {
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		commit = true
 	}
 	namespace := l.Namespace
 	tx = tx.Begin()
@@ -68,6 +76,9 @@ func UpdateLoginUsernamePassword(l *types.UserLogin, username, password string) 
 	}
 	if err = cleanLoginCache(l); err != nil {
 		return err
+	}
+	if !commit {
+		return nil
 	}
 
 	if err = tx.Commit().Error; err != nil {
@@ -377,7 +388,7 @@ func cleanLoginCache(login *types.UserLogin) error {
 	return nil
 }
 
-func DeleteUserLogin(namespace string, userID types.UserID, loginID types.LoginID) error {
+func DeleteUserLogin(tx *gorm.DB, namespace string, userID types.UserID, loginID types.LoginID) error {
 	login, err := GetUserLoginFast(namespace, loginID)
 	if err != nil {
 		if errors.Is(err, ErrUserLoginNotExists) {
@@ -385,12 +396,16 @@ func DeleteUserLogin(namespace string, userID types.UserID, loginID types.LoginI
 		}
 		return err
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var commit bool
+	if tx == nil {
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		commit = true
+		tx = tx.Begin()
+		defer tx.Rollback()
 	}
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	err = tx.Delete(&types.UserLogin{}, "namespace = ? and id = ?", namespace, loginID).Error
 	if err != nil {
@@ -400,6 +415,9 @@ func DeleteUserLogin(namespace string, userID types.UserID, loginID types.LoginI
 		return err
 	}
 
+	if !commit {
+		return nil
+	}
 	return tx.Commit().Error
 }
 func DeleteUserLoginByUserID(namespace string, userID types.UserID) error {
@@ -431,7 +449,7 @@ func DeleteUserLoginByUserID(namespace string, userID types.UserID) error {
 	}
 	return tx.Commit().Error
 }
-func DeleteUserLoginCheckUserID(namespace string, userID types.UserID, loginName string) error {
+func DeleteUserLoginCheckUserID(tx *gorm.DB, namespace string, userID types.UserID, loginName string) error {
 	loginInfo, err := GetUserLoginByLoginName(namespace, loginName)
 	if err != nil {
 		return err
@@ -439,7 +457,7 @@ func DeleteUserLoginCheckUserID(namespace string, userID types.UserID, loginName
 	if loginInfo.UserID != userID {
 		return ErrUserLoginUsedByOtherUser
 	}
-	return DeleteUserLogin(namespace, userID, types.LoginID(loginInfo.ID))
+	return DeleteUserLogin(tx, namespace, userID, types.LoginID(loginInfo.ID))
 }
 
 // GetUserEmailOrPhone does not return error if there is no email/phone

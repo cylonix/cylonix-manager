@@ -6,6 +6,7 @@ package common
 import (
 	"context"
 	"cylonix/sase/api/v2"
+	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/interfaces"
 	"cylonix/sase/pkg/logging/logfields"
@@ -688,7 +689,7 @@ func (n *NamespaceInfo) IsInternetExitNodeSupported() bool {
 
 // Users may only work in the mesh vpn mode and hence not requiring any of
 // our SASE gateway services. This could be device specific too in the future.
-func IsGatewaySupported(namespace string, userID types.UserID, deviceID types.DeviceID) bool {
+func IsGatewaySupported(namespace string, user *types.User, userID types.UserID, deviceID types.DeviceID) bool {
 	mappingLock.Lock()
 	defer mappingLock.Unlock()
 
@@ -697,13 +698,26 @@ func IsGatewaySupported(namespace string, userID types.UserID, deviceID types.De
 		return false
 	}
 	n := (*NamespaceInfo)(value)
-	return n.IsGatewaySupported()
+	if !n.IsGatewaySupported() {
+		return false
+	}
+	if userID.IsNil() && user == nil {
+		return true
+	}
+	if user == nil {
+		u, err := db.GetUserByID(&namespace, userID)
+		if err != nil {
+			return false
+		}
+		user = u
+	}
+	return optional.Bool(user.GatewayEnabled)
 }
 func IsGatewaySupportedForNamespace(namespace string) bool {
-	return IsGatewaySupported(namespace, types.NilID, types.NilID)
+	return IsGatewaySupported(namespace, nil, types.NilID, types.NilID)
 }
 func IsGatewaySupportedForUser(namespace string, userID types.UserID) bool {
-	return IsGatewaySupported(namespace, userID, types.NilID)
+	return IsGatewaySupported(namespace, nil, userID, types.NilID)
 }
 func IsExitNodeSupported(namespace string, userID types.UserID, deviceID types.DeviceID) bool {
 	mappingLock.Lock()

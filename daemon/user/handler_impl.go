@@ -24,6 +24,7 @@ import (
 	"github.com/cylonix/utils"
 	kc "github.com/cylonix/utils/keycloak"
 	ulog "github.com/cylonix/utils/log"
+	"gorm.io/gorm"
 
 	"github.com/sirupsen/logrus"
 )
@@ -121,6 +122,7 @@ func isAdminOnlyUpdate(u *models.UserUpdateInfo) bool {
 		u.MeshVpnMode != nil ||
 		u.AdvertiseDefaultRoute != nil ||
 		u.WgEnabled != nil ||
+		u.GatewayEnabled != nil ||
 		u.AutoAcceptRoutes != nil ||
 		u.AutoApproveDevice != nil
 }
@@ -131,12 +133,19 @@ func isCriticalUpdate(u *models.UserUpdateInfo) bool {
 		optional.Bool(u.SetUsername) || optional.Bool(u.SetPassword)
 }
 
+func isPeersNotifyNeeded(update *models.UserUpdateInfo) bool {
+	return update.GatewayEnabled != nil || update.MeshVpnMode != nil ||
+		update.AutoAcceptRoutes != nil || update.AdvertiseDefaultRoute != nil ||
+		update.AddLabels != nil || update.DelLabels != nil
+}
+
 func (h *handlerImpl) addEmailOrPhone(
+	tx *gorm.DB,
 	login *types.UserLogin, isPhone bool,
 	approverID types.UserID, approverName string,
 	update *models.UserUpdateInfo, ub *types.UserBaseInfo, logger *logrus.Entry,
 ) error {
-	if err := h.addUserLoginIfNotExists(login, approverID, approverName); err != nil {
+	if err := h.addUserLoginIfNotExists(tx, login, approverID, approverName); err != nil {
 		logger.WithError(err).Warnln("Add email/phone failed.")
 		if errors.Is(err, db.ErrUserLoginUsedByOtherUser) {
 			if isPhone {
@@ -157,10 +166,11 @@ func (h *handlerImpl) addEmailOrPhone(
 	return nil
 }
 func (h *handlerImpl) delEmailOrPhone(
+	tx *gorm.DB,
 	namespace string, userID types.UserID, loginName string, isPhone bool,
 	update *models.UserUpdateInfo, ub *types.UserBaseInfo, logger *logrus.Entry,
 ) error {
-	if err := db.DeleteUserLoginCheckUserID(namespace, userID, loginName); err != nil {
+	if err := db.DeleteUserLoginCheckUserID(tx, namespace, userID, loginName); err != nil {
 		logger.WithError(err).Warnln("Delete email/phone failed.")
 	}
 	if !isPhone && loginName == optional.String(ub.Email) ||
@@ -182,7 +192,10 @@ func (h *handlerImpl) delEmailOrPhone(
 	return nil
 }
 
-func (h *handlerImpl) addUserLoginIfNotExists(login *types.UserLogin, approverID types.UserID, approverName string) error {
+func (h *handlerImpl) addUserLoginIfNotExists(
+	tx *gorm.DB,
+	login *types.UserLogin, approverID types.UserID, approverName string,
+) error {
 	namespace, loginName := login.Namespace, login.LoginName
 	if err := db.CreateUserLogin(login); err != nil {
 		if !errors.Is(err, db.ErrUserLoginExists) {
@@ -205,7 +218,10 @@ func (h *handlerImpl) addUserLoginIfNotExists(login *types.UserLogin, approverID
 		}
 		return err
 	}
-	if err := db.SetUserApprovalState(namespace, r.ID, approverID, approverName, "", models.ApprovalStateApproved); err != nil {
+	if err := db.SetUserApprovalState(
+		tx, namespace, r.ID, approverID, approverName,
+		"", models.ApprovalStateApproved,
+	); err != nil {
 		if !errors.Is(err, db.ErrUserApprovalNotExists) {
 			return err
 		}
@@ -293,6 +309,13 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 	}
 	ub := &su.UserBaseInfo
 
+	tx, err := db.BeginTransaction()
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to begin transaction.")
+		return common.ErrInternalErr
+	}
+	defer tx.Rollback()
+
 	// TODO: move all the updates to be done in db for rollbacks.
 	if update.SetUsername != nil && *update.SetUsername && update.Username != nil && *update.Username != "" {
 		logger = logger.WithField(ulog.Username, update.Username)
@@ -320,7 +343,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 				return common.ErrInternalErr
 			}
 			// Login not yet exists for non-admin user. Add login.
-			if err := h.addUserLoginIfNotExists(login, approverID, approverName); err != nil {
+			if err := h.addUserLoginIfNotExists(tx, login, approverID, approverName); err != nil {
 				logger.WithError(err).Warnln("Create new username login failed.")
 				if errors.Is(err, db.ErrUserLoginUsedByOtherUser) {
 					return common.ErrModelUsernameRegistered
@@ -330,6 +353,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 			// Add login success. Fall through to process other updates.
 		} else {
 			err = h.setUsernamePassword(
+				tx, // support rollback if needed
 				namespace, *update.Username, optional.String(update.Password),
 				current.LoginName, models.LoginTypeUsername,
 				logger,
@@ -346,6 +370,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 			loginType = models.LoginTypeEmail
 		}
 		err = h.setUsernamePassword(
+			tx, // support rollback if needed
 			namespace, "", optional.String(update.Password),
 			loginName, loginType, logger,
 		)
@@ -357,7 +382,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 		logger = logger.WithField("add-email", update.AddEmail)
 		login := types.NewEmailLogin(namespace, *update.AddEmail, "", "")
 		login.UserID = userID
-		if err := h.addEmailOrPhone(login, false, approverID, approverName, update, ub, logger); err != nil {
+		if err := h.addEmailOrPhone(tx, login, false, approverID, approverName, update, ub, logger); err != nil {
 			return err
 		}
 	}
@@ -365,27 +390,33 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 		logger = logger.WithField("add-phone", update.AddPhone)
 		login := types.NewPhoneLogin(namespace, *update.AddPhone, "", "")
 		login.UserID = userID
-		err := h.addEmailOrPhone(login, true, approverID, approverName, update, ub, logger)
+		err := h.addEmailOrPhone(tx, login, true, approverID, approverName, update, ub, logger)
 		if err != nil {
 			return err
 		}
 	}
 	if optional.String(update.DelEmail) != "" {
 		logger = logger.WithField("del-email", update.DelEmail)
-		err := h.delEmailOrPhone(namespace, userID, optional.String(update.DelEmail), false, update, ub, logger)
+		err := h.delEmailOrPhone(
+			tx, namespace, userID, optional.String(update.DelEmail),
+			false, update, ub, logger,
+		)
 		if err != nil {
 			return err
 		}
 	}
 	if optional.String(update.DelPhone) != "" {
 		logger = logger.WithField("del-phone", update.DelPhone)
-		err := h.delEmailOrPhone(namespace, userID, optional.String(update.DelPhone), true, update, ub, logger)
+		err := h.delEmailOrPhone(
+			tx, namespace, userID, optional.String(update.DelPhone),
+			true, update, ub, logger,
+		)
 		if err != nil {
 			return err
 		}
 	}
 	if update.AddRole != nil {
-		if err := db.AddUserRole(namespace, userID, string(*update.AddRole)); err != nil {
+		if err := db.AddUserRole(tx, namespace, userID, string(*update.AddRole)); err != nil {
 			logger.
 				WithField("role", *update.AddRole).
 				WithError(err).
@@ -394,7 +425,7 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 		}
 	}
 	if update.DelRole != nil {
-		if err := db.DelUserRole(namespace, userID, string(*update.DelRole)); err != nil {
+		if err := db.DelUserRole(tx, namespace, userID, string(*update.DelRole)); err != nil {
 			logger.
 				WithField("role", *update.DelRole).
 				WithError(err).
@@ -402,9 +433,20 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 			return common.ErrInternalErr
 		}
 	}
-	if err := db.UpdateUser(namespace, userID, update); err != nil {
+	if err := db.UpdateUser(tx, namespace, userID, update); err != nil {
 		logger.WithError(err).Errorln("Failed")
 		return common.ErrInternalErr
+	}
+	if err := tx.Commit().Error; err != nil {
+		logger.WithError(err).Errorln("Failed to commit transaction.")
+		return common.ErrInternalErr
+	}
+
+	if isPeersNotifyNeeded(update) {
+		if err := vpn.UpdateUserPeers(namespace, userID); err != nil {
+			logger.WithError(err).Errorln("Failed to notify user peers of config change.")
+			return common.ErrInternalErr
+		}
 	}
 	return nil
 }
@@ -473,7 +515,7 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 		return common.ErrModelUnauthorized
 	}
 	if approval.State != types.ApprovalStateApproved {
-		err = db.SetUserApprovalState(namespace, approval.ID, userID, token.Username, "", models.ApprovalStateApproved)
+		err = db.SetUserApprovalState(nil, namespace, approval.ID, userID, token.Username, "", models.ApprovalStateApproved)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to set user approval record approved.")
 			return common.ErrInternalErr
@@ -821,7 +863,7 @@ func (h *handlerImpl) UpdateApprovals(auth interface{}, requestObject api.Update
 			log.Warnln("Included empty approval id.")
 			continue
 		}
-		err := db.SetUserApprovalState(namespace, id, userID, token.Username, note, state)
+		err := db.SetUserApprovalState(nil, namespace, id, userID, token.Username, note, state)
 		if err != nil {
 			log.WithError(err).Errorln("Failed to update approval state.")
 			if errors.Is(err, db.ErrUserApprovalNotExists) {
@@ -922,6 +964,7 @@ func (h *handlerImpl) ChangePassword(auth interface{}, requestObject api.ChangeP
 	}
 
 	if err = h.setUsernamePassword(
+		nil, // tx is nil, no dependency on transaction here
 		current.Namespace, "", password, current.LoginName, loginType,
 		logger,
 	); err != nil {
@@ -931,6 +974,7 @@ func (h *handlerImpl) ChangePassword(auth interface{}, requestObject api.ChangeP
 }
 
 func (h *handlerImpl) setUsernamePassword(
+	tx *gorm.DB,
 	namespace, username, password, loginName string,
 	mLoginType models.LoginType, logger *logrus.Entry,
 ) error {
@@ -963,7 +1007,7 @@ func (h *handlerImpl) setUsernamePassword(
 
 	// Update the password in user login.
 	// DB will check and save the bcrypt hashed raw password.
-	if err := db.UpdateLoginUsernamePassword(login, username, password); err != nil {
+	if err := db.UpdateLoginUsernamePassword(tx, login, username, password); err != nil {
 		logger.WithError(err).Errorln("Update username password in database failed.")
 		if errors.Is(err, db.ErrInvalidLoginType) {
 			return common.NewBadParamsErr(err)
@@ -1063,7 +1107,7 @@ func (h *handlerImpl) ResetPassword(requestObject api.ResetPasswordRequestObject
 	if isAdmin {
 		logger.Warnln("Admin forgetting own password.")
 	}
-	return h.setUsernamePassword(namespace, "", f.NewPassword, loginName, models.LoginTypeUsername, logger)
+	return h.setUsernamePassword(nil, namespace, "", f.NewPassword, loginName, models.LoginTypeUsername, logger)
 }
 
 func (h *handlerImpl) ListNotice(auth interface{}, requestObject api.ListNoticeRequestObject) (*models.NoticeList, error) {
@@ -1672,7 +1716,15 @@ func (h *handlerImpl) ListAccessPoint(auth interface{}, requestObject api.ListAc
 		}
 		userID = id
 	}
-	if common.IsGatewaySupported(namespace, userID, types.NilID) {
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		if requestObject.UserID != "" && errors.Is(err, db.ErrUserNotExists) {
+			return nil, common.NewBadParamsErr(err)
+		}
+		return nil, common.ErrInternalErr
+	}
+	if common.IsGatewaySupported(namespace, user, userID, types.NilID) {
 		list, err := common.AccessPoints(namespace)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get namespace ap list")
@@ -1698,7 +1750,12 @@ func (h *handlerImpl) ChangeAccessPoint(auth interface{}, requestObject api.Chan
 			return nil, common.NewBadParamsErr(err)
 		}
 	}
-	if !common.IsGatewaySupported(namespace, userID, types.NilID) {
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		return nil, common.ErrInternalErr
+	}
+	if !common.IsGatewaySupported(namespace, user, userID, types.NilID) {
 		err := errors.New("access point is not supported")
 		return nil, common.NewBadParamsErr(err)
 	}
@@ -1742,7 +1799,7 @@ func (h *handlerImpl) ChangeAccessPoint(auth interface{}, requestObject api.Chan
 		return nil, common.NewBadParamsErr(err)
 	}
 
-	exitNodeID, err := common.ChangeExitNode(wgInfo, apName, token, logger)
+	exitNodeID, err := common.ChangeExitNode(user, wgInfo, apName, token, logger)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to move device to new wg.")
 		return nil, common.ErrInternalErr

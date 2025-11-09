@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"cylonix/sase/pkg/fwconfig"
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/optional"
 	dt "cylonix/sase/pkg/test/daemon"
 	dbt "cylonix/sase/pkg/test/db"
@@ -29,6 +28,7 @@ import (
 	"github.com/cylonix/utils"
 	"github.com/cylonix/utils/constv"
 	"github.com/cylonix/utils/etcd"
+	"github.com/cylonix/utils/ipdrawer"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"

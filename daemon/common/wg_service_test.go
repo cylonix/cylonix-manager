@@ -8,7 +8,6 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/optional"
 	dt "cylonix/sase/pkg/test/daemon"
 	rt "cylonix/sase/pkg/test/resource"
@@ -27,6 +26,7 @@ import (
 	"github.com/cylonix/utils/constv"
 	"github.com/cylonix/utils/etcd"
 	"github.com/cylonix/utils/fabric"
+	"github.com/cylonix/utils/ipdrawer"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -116,6 +116,13 @@ func NamespaceRootUserNetworkDomain(namespace string) string {
 	return "system-internal." + namespace
 }
 
+func IsNamespaceRootUser(username string) bool {
+	if username == "root" || username == "system-internal" {
+		return true
+	}
+	return false
+}
+
 func GetOrCreateNamespaceRootUser(namespace string) (*types.User, error) {
 	// Try to get "root" user first
 	username := "root"
@@ -146,9 +153,9 @@ func GetOrCreateNamespaceRootUser(namespace string) (*types.User, error) {
 	return user, err
 }
 
-func ChangeExitNode(wgInfo *types.WgInfo, newWgName string, token *utils.UserTokenData, logger *logrus.Entry) (exitNodeID *types.ID, err error) {
+func ChangeExitNode(user *types.User, wgInfo *types.WgInfo, newWgName string, token *utils.UserTokenData, logger *logrus.Entry) (exitNodeID *types.ID, err error) {
 	namespace, userID, newWgID := wgInfo.Namespace, wgInfo.UserID, ""
-	if !IsGatewaySupported(namespace, userID, wgInfo.DeviceID) {
+	if !IsGatewaySupported(namespace, user, userID, wgInfo.DeviceID) {
 		return nil, nil
 	}
 

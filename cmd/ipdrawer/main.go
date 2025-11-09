@@ -4,8 +4,9 @@
 package main
 
 import (
-	"cylonix/sase/pkg/ipdrawer"
 	"fmt"
+
+	"github.com/cylonix/utils/ipdrawer"
 )
 
 func main() {

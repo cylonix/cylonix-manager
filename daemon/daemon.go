@@ -24,7 +24,6 @@ import (
 	"cylonix/sase/daemon/vpn"
 	"cylonix/sase/pkg/fwconfig"
 	"cylonix/sase/pkg/interfaces"
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/logging"
 	"cylonix/sase/pkg/metrics"
 	"cylonix/sase/pkg/optional"
@@ -49,6 +48,7 @@ import (
 	"github.com/go-chi/httplog/v2"
 
 	"github.com/cylonix/utils"
+	"github.com/cylonix/utils/ipdrawer"
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"

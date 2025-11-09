@@ -137,6 +137,18 @@ var (
 			},
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
+		{
+			ID: "2025010270900",
+			Migrate: func(tx *gorm.DB) error {
+				log.Printf(`
+					Migrating to add user gateway-enabled field support.
+				`)
+				return tx.AutoMigrate(
+					&types.User{},
+				)
+			},
+			Rollback: func(db *gorm.DB) error { return nil },
+		},
 	}
 )
 

@@ -94,7 +94,7 @@ func TestLoginDB(t *testing.T) {
 	}
 
 	password := "567891"
-	err = UpdateLoginUsernamePassword(login, "", password)
+	err = UpdateLoginUsernamePassword(nil, login, "", password)
 	assert.Nil(t, err)
 
 	newResult, err := GetUserLogin(namespace, login.ID)
@@ -115,7 +115,7 @@ func TestLoginDB(t *testing.T) {
 	_, err = GetUserLoginCacheOnly(namespace, login.ID)
 	assert.Nil(t, err)
 
-	err = DeleteUserLogin(namespace, userID, login.ID)
+	err = DeleteUserLogin(nil, namespace, userID, login.ID)
 	assert.Nil(t, err)
 	_, err = GetUserLogin(namespace, login.ID)
 	if assert.NotNil(t, err) {
@@ -139,10 +139,10 @@ func TestLoginDB(t *testing.T) {
 	// Delete non existing login with user ID check should generate error.
 	_, err = GetUserLoginByLoginName(namespace, loginName)
 	assert.ErrorIs(t, err, ErrUserLoginNotExists)
-	err = DeleteUserLoginCheckUserID(namespace, userID, loginName)
+	err = DeleteUserLoginCheckUserID(nil, namespace, userID, loginName)
 	assert.ErrorIs(t, err, ErrUserLoginNotExists)
 
-	err = DeleteUserLoginCheckUserID(namespace, types.NilID, loginName)
+	err = DeleteUserLoginCheckUserID(nil, namespace, types.NilID, loginName)
 	assert.ErrorIs(t, err, ErrUserLoginNotExists)
 
 	email, err := GetUserEmailOrPhone(namespace, userID, false)
@@ -188,9 +188,9 @@ func TestLoginDB(t *testing.T) {
 		assert.Equal(t, loginResult.LoginName, phoneLoginName)
 	}
 
-	err = DeleteUserLoginCheckUserID(namespace, types.NilID, phoneLoginName)
+	err = DeleteUserLoginCheckUserID(nil, namespace, types.NilID, phoneLoginName)
 	assert.NotNil(t, err)
-	err = DeleteUserLoginCheckUserID(namespace, userID, phoneLoginName)
+	err = DeleteUserLoginCheckUserID(nil, namespace, userID, phoneLoginName)
 	assert.Nil(t, err)
 
 	ret, err := GetLoginName(namespace, userID)

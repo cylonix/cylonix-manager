@@ -7,11 +7,11 @@ import (
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/fwconfig"
-	"cylonix/sase/pkg/ipdrawer"
 	vpnpkg "cylonix/sase/pkg/vpn"
 	"errors"
 	"fmt"
 
+	"github.com/cylonix/utils/ipdrawer"
 	"gorm.io/gorm"
 )
 

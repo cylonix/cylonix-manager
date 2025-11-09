@@ -11,11 +11,11 @@ import (
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/fwconfig"
 	"cylonix/sase/pkg/interfaces"
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/logging/logfields"
 	"cylonix/sase/pkg/optional"
 	"errors"
 
+	"github.com/cylonix/utils/ipdrawer"
 	ulog "github.com/cylonix/utils/log"
 
 	"github.com/sirupsen/logrus"

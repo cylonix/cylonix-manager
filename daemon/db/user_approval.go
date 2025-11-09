@@ -69,6 +69,7 @@ func GetUserApprovalState(namespace, loginName string) (*types.ApprovalState, er
 	return &state, nil
 }
 func SetUserApprovalState(
+	tx *gorm.DB,
 	namespace string, id types.UserApprovalID,
 	approverUserID types.UserID, approverName, note string,
 	state models.ApprovalState,
@@ -76,12 +77,17 @@ func SetUserApprovalState(
 	if namespace == "" || id == types.NilID {
 		return ErrBadParams
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var err error
+	var commit bool
+	if tx == nil {
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		commit = true
+		tx = tx.Begin()
+		defer tx.Rollback()
 	}
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	model := &types.UserApproval{Model: types.Model{ID: id}}
 	var s = types.FromModelToApprovalState(state)
@@ -99,6 +105,9 @@ func SetUserApprovalState(
 	}
 	if err = tx.Model(model).Association("History").Append(entry); err != nil {
 		return err
+	}
+	if !commit {
+		return nil
 	}
 	return tx.Commit().Error
 }

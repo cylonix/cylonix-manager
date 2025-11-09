@@ -188,18 +188,37 @@ func (n *NodeHandler) addNewNode(namespace string, userID types.UserID, machineK
 	return device.WgInfo, nil
 }
 
-func (n *NodeHandler) updateWgInfoAndRotateNodeKey(wgInfo *types.WgInfo, node *hstypes.Node, nodeHexKey string) error {
+func (n *NodeHandler) updateWgInfoAndRotateNodeKey(
+	wgInfo *types.WgInfo, node *hstypes.Node, nodeHexKey string,
+) (err error) {
 	if err := n.updateNode(wgInfo, node, nodeHexKey); err != nil {
 		return err
 	}
 	if wgInfo.PublicKeyHex == nodeHexKey {
 		return nil
 	}
-	wgInfo, err := db.GetWgInfoOfDevice(wgInfo.Namespace, wgInfo.DeviceID)
+	oldKey := wgInfo.PublicKeyHex
+	defer func() {
+		if err != nil {
+			// Rollback the wg info public key in db.
+			newErr := db.UpdateWgInfo(wgInfo.DeviceID, &types.WgInfo{
+				PublicKeyHex: oldKey,
+			})
+			if newErr != nil {
+				n.logger.
+					WithField(ulog.Namespace, wgInfo.Namespace).
+					WithField("node", node.GivenName).
+					WithError(newErr).
+					Errorln("failed to rollback wg info public key")
+			}
+		}
+	}()
+	wgInfo, err = db.GetWgInfoOfDevice(wgInfo.Namespace, wgInfo.DeviceID)
 	if err != nil {
 		return err
 	}
-	return n.vpnService.RotateNodeKey(wgInfo, node.MachineKey, node.NodeKey, nodeHexKey)
+	err = n.vpnService.RotateNodeKeyInGateway(wgInfo, node.MachineKey, node.NodeKey, nodeHexKey)
+	return
 }
 
 func (n *NodeHandler) AuthURL(node *hstypes.Node, current string) (string, error) {
@@ -466,7 +485,7 @@ func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID
 		return nil, nil, nil, err
 	}
 	namespace, userID := userInfo.Namespace, userInfo.UserID
-	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
+	wgInfo, err := db.WgInfoByNodeID(node.ID.Uint64())
 	if err != nil {
 		if !errors.Is(err, db.ErrDeviceWgInfoNotExists) {
 			return nil, nil, nil, err
@@ -487,6 +506,9 @@ func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID
 		if err != nil {
 			return nil, nil, nil, controlclient.UserVisibleError("machine failed to be added: " + err.Error())
 		}
+	}
+	if wgInfo.Namespace != namespace || wgInfo.UserID != userID {
+		return nil, nil, nil, fmt.Errorf("node namespace/userID mismatch")
 	}
 	list, onlineNodes, err := n.vpnService.Peers(wgInfo)
 	if err != nil {
@@ -599,7 +621,6 @@ func (n *NodeHandler) User(user *hstypes.User) *tailcfg.User {
 		ProfilePicURL: ub.ProfilePicURL,
 		Created:       ub.CreatedAt,
 	}
-	logger.Debugf("user=%v", ret)
 	return &ret
 }
 
@@ -628,7 +649,6 @@ func (n *NodeHandler) UserLogin(user *hstypes.User) *tailcfg.Login {
 		DisplayName:   displayName,
 		ProfilePicURL: l.ProfilePicURL,
 	}
-	logger.Debugf("login=%v", ret)
 	return &ret
 }
 
@@ -647,7 +667,6 @@ func (n *NodeHandler) UserProfile(user *hstypes.User) *tailcfg.UserProfile {
 	}
 	ret := userBaseInfoToProfile(ub)
 	ret.ID = tailcfg.UserID(user.ID)
-	logger.Debugf("profile=%v", *ret)
 	return ret
 }
 
@@ -687,21 +706,26 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 		WithField("machine-key", node.MachineKey.ShortString())
 
 	namespace, userID := userInfo.Namespace, userInfo.UserID
-	machineKey, err := node.MachineKey.MarshalText()
-	if err != nil {
-		return err
-	}
-	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
+	wgInfo, err := db.WgInfoByNodeID(node.ID.Uint64())
 	if err != nil {
 		log.WithError(err).Errorln("Failed to fetch node from the database with machine key")
 		return err
+	}
+	if wgInfo.Namespace != namespace || wgInfo.UserID != userID {
+		log.Errorln("Node namespace/userID mismatch")
+		return fmt.Errorf("node namespace/userID mismatch")
 	}
 	if wgInfo.WgID == exitNodeID {
 		log.Debugln("Exit node is the same as the current one. Skip.")
 		return nil
 	}
+	user, err := db.GetUserByID(&namespace, userID)
+	if err != nil {
+		log.WithError(err).Errorln("Failed to fetch user from the database")
+		return err
+	}
 	if exitNodeID == "" {
-		if _, err := common.ChangeExitNode(wgInfo, "", nil, log); err != nil {
+		if _, err := common.ChangeExitNode(user, wgInfo, "", nil, log); err != nil {
 			log.WithError(err).Errorln("failed to change exit node")
 			return err
 		}
@@ -728,10 +752,32 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 			newWgName = wg.Name
 		}
 	}
-	_, err = common.ChangeExitNode(wgInfo, newWgName, nil, log)
+	_, err = common.ChangeExitNode(user, wgInfo, newWgName, nil, log)
 	if err != nil {
 		log.WithError(err).Errorln("failed to change exit node")
 		return err
+	}
+	return nil
+}
+
+func (n *NodeHandler) PeersPostProcessing(
+	node *hstypes.Node,
+	peers []*tailcfg.Node, profiles []tailcfg.UserProfile,
+) error {
+	for _, peer := range peers {
+		// For wg-nodes, set IsJailed to true.
+		if peer.IsWireGuardOnly {
+			for _, profile := range profiles {
+				if profile.ID != peer.User {
+					continue
+				}
+				// Find the user.
+				if common.IsNamespaceRootUser(profile.LoginName) {
+					peer.IsJailed = true
+					break
+				}
+			}
+		}
 	}
 	return nil
 }

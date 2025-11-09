@@ -4,11 +4,11 @@
 package vpn
 
 import (
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/optional"
 	"errors"
 	"net/netip"
 
+	"github.com/cylonix/utils/ipdrawer"
 	"github.com/google/uuid"
 	hstypes "github.com/juanfont/headscale/hscontrol/types"
 	"tailscale.com/types/key"

@@ -507,3 +507,18 @@ func UpdateUserNetworkDomain(namespace string, userID types.UserID, networkDomai
 	_, err := client.UpdateUserNetworkDomain(ctx, request)
 	return err
 }
+
+func UpdateUserPeers(namespace string, userID types.UserID) error {
+	if headscale == nil {
+		return ErrHeadscaleNotInitialized
+	}
+	request := &v1.UpdateUserPeersRequest{
+		User:      userID.String(),
+		Namespace: namespace,
+	}
+	client := getHsClient()
+	ctx, cancel := newHsClientContext()
+	defer cancel()
+	_, err := client.UpdateUserPeers(ctx, request)
+	return err
+}

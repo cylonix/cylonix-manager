@@ -743,17 +743,21 @@ func GetUserLabelList(namespace string, userID types.UserID) ([]types.Label, err
 	return ret, nil
 }
 
-func UpdateUser(namespace string, userID types.UserID, update *models.UserUpdateInfo) error {
+func UpdateUser(tx *gorm.DB, namespace string, userID types.UserID, update *models.UserUpdateInfo) error {
 	_, err := GetUserFast(namespace, userID, false)
 	if err != nil {
 		return err
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var commit bool
+	if tx == nil {
+		commit = true
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		tx = tx.Begin()
+		defer tx.Rollback()
 	}
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	userUpdate := map[string]interface{}{}
 	ubUpdate := map[string]interface{}{}
@@ -766,6 +770,10 @@ func UpdateUser(namespace string, userID types.UserID, update *models.UserUpdate
 	if update.WgEnabled != nil {
 		updateUser = true
 		userUpdate["wg_enabled"] = update.WgEnabled
+	}
+	if update.GatewayEnabled != nil {
+		updateUser = true
+		userUpdate["gateway_enabled"] = update.GatewayEnabled
 	}
 	if update.MeshVpnMode != nil {
 		updateUser = true
@@ -801,6 +809,9 @@ func UpdateUser(namespace string, userID types.UserID, update *models.UserUpdate
 	}
 	if err = deleteUserCache(namespace, userID); err != nil {
 		return err
+	}
+	if !commit {
+		return nil
 	}
 	return tx.Commit().Error
 }
@@ -1072,7 +1083,7 @@ func UpdateUserNetworkDomain(namespace, prevDomain, newDomain string, ofUserID *
 	return tx.Commit().Error
 }
 
-func AddUserRole(namespace string, userID types.UserID, role string) error {
+func AddUserRole(tx *gorm.DB, namespace string, userID types.UserID, role string) error {
 	if role == "" {
 		return fmt.Errorf("%w: role is empty", ErrBadParams)
 	}
@@ -1086,9 +1097,12 @@ func AddUserRole(namespace string, userID types.UserID, role string) error {
 	if user.Namespace != namespace {
 		return fmt.Errorf("%w: namespace is '%v', want '%v'", ErrNamespaceMismatch, user.Namespace, namespace)
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var err error
+	if tx == nil {
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
 	}
 	tx = tx.Model(&types.User{}).
 			Where("namespace = ? and id = ?", namespace, userID)
@@ -1109,7 +1123,7 @@ func AddUserRole(namespace string, userID types.UserID, role string) error {
 	roles := append(user.Roles, role)
 	return tx.Update("roles", roles).Error
 }
-func DelUserRole(namespace string, userID types.UserID, role string) error {
+func DelUserRole(tx *gorm.DB, namespace string, userID types.UserID, role string) error {
 	if role == "" {
 		return fmt.Errorf("%w: role is empty", ErrBadParams)
 	}
@@ -1123,9 +1137,12 @@ func DelUserRole(namespace string, userID types.UserID, role string) error {
 	if user.Namespace != namespace {
 		return fmt.Errorf("%w: namespace is '%v', want '%v'", ErrNamespaceMismatch, user.Namespace, namespace)
 	}
-	tx, err := getPGconn()
-	if err != nil {
-		return err
+	var err error
+	if tx == nil {
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
 	}
 	tx = tx.Model(&types.User{}).
 			Where("namespace = ? and id = ?", namespace, userID)

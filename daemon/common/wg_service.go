@@ -9,7 +9,6 @@ import (
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/interfaces"
-	"cylonix/sase/pkg/ipdrawer"
 	"cylonix/sase/pkg/logging/logfields"
 	"cylonix/sase/pkg/metrics"
 	"cylonix/sase/pkg/optional"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/cylonix/utils"
 	"github.com/cylonix/utils/fabric"
+	"github.com/cylonix/utils/ipdrawer"
 	ulog "github.com/cylonix/utils/log"
 
 	"github.com/sirupsen/logrus"
@@ -1108,7 +1108,7 @@ func AccessPoints(namespace string) ([]models.AccessPoint, error) {
 	if wgService == nil {
 		return nil, ErrWgServiceNotReady
 	}
-	if !IsGatewaySupported(namespace, types.NilID, types.NilID) {
+	if !IsGatewaySupportedForNamespace(namespace) {
 		return nil, nil
 	}
 	ret, err := wgService.resource.AccessPoints(namespace)

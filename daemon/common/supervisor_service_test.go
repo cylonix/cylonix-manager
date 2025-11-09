@@ -49,14 +49,14 @@ func TestGateway(t *testing.T) {
 
 	nsNameMapToFullInfo[namespace] = &supervisor.FullNamespace{}
 	assert.False(t, IsExitNodeSupported(namespace, types.NilID, types.NilID))
-	assert.False(t, IsGatewaySupported(namespace, types.NilID, types.NilID))
+	assert.False(t, IsGatewaySupported(namespace, nil, types.NilID, types.NilID))
 	assert.False(t, IsGatewaySupportedForUser(namespace, types.NilID))
 	assert.False(t, IsGatewaySupportedForNamespace(namespace))
 
 	mode := supervisor.MeshNetworkModeFull
 	nsNameMapToFullInfo[namespace] = &supervisor.FullNamespace{Mode: &mode}
 	assert.True(t, IsExitNodeSupported(namespace, types.NilID, types.NilID))
-	assert.True(t, IsGatewaySupported(namespace, types.NilID, types.NilID))
+	assert.True(t, IsGatewaySupported(namespace, nil, types.NilID, types.NilID))
 	assert.True(t, IsGatewaySupportedForUser(namespace, types.NilID))
 	assert.True(t, IsGatewaySupportedForNamespace(namespace))
 
