@@ -55,7 +55,7 @@ func internalAuthenticate(token string) (interface{}, error) {
 }
 
 func adminAuthenticate(token string) (interface{}, error) {
-	s := utils.ShortStringN(token, 20)
+	s := utils.ShortStringN(token, 40)
 	if debugAuth {
 		log.Printf("%s admin auth", s)
 	}

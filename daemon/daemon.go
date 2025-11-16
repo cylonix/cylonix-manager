@@ -329,7 +329,7 @@ func (d *Daemon) Run() error {
 	if err := db.InitDatabase(); err != nil {
 		return err
 	}
-	if err := ipdrawer.InitIPdrawer(); err != nil {
+	if err := ipdrawer.InitIPdrawer(""); err != nil {
 		return err
 	}
 	if err := d.initSysAdmin(); err != nil {

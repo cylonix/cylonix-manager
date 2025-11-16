@@ -98,9 +98,9 @@ func (n *NodeHandler) updateNode(wgInfo *types.WgInfo, node *hstypes.Node, nodeK
 	}
 	var (
 		update   *types.WgInfo
-		hostname = ""
+		hostname = node.GivenName
 	)
-	if node.Hostinfo != nil {
+	if node.Hostinfo != nil && hostname == "" {
 		hostname = node.Hostinfo.Hostname
 	}
 	currentNodeID := optional.V(wgInfo.NodeID, 0)
@@ -724,6 +724,25 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 		log.WithError(err).Errorln("Failed to fetch user from the database")
 		return err
 	}
+
+	// Check node key consistency.
+	currentNodeKeyHex, err := vpnpkg.NodeKeyToHexString(node.NodeKey)
+	if err != nil {
+		log.WithError(err).Errorln("Failed to encode node key to hex")
+		return err
+	}
+	if wgInfo.PublicKeyHex != currentNodeKeyHex {
+		log.WithField("wg-info-key", wgInfo.PublicKeyHex).
+			WithField("node-key", currentNodeKeyHex).
+			Errorln("Node key mismatch")
+		if err := n.updateNode(wgInfo, node, currentNodeKeyHex); err != nil {
+			log.WithError(err).Errorln("Failed to update wg info node key")
+			return err
+		}
+		log.Debugln("Updated wg info node key to match the node key")
+		wgInfo.PublicKeyHex = currentNodeKeyHex
+	}
+
 	if exitNodeID == "" {
 		if _, err := common.ChangeExitNode(user, wgInfo, "", nil, log); err != nil {
 			log.WithError(err).Errorln("failed to change exit node")
