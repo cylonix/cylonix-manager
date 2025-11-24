@@ -14,6 +14,8 @@ import (
 	"cylonix/sase/pkg/logging/logfields"
 	"cylonix/sase/pkg/optional"
 	"errors"
+	"fmt"
+	"regexp"
 
 	"github.com/cylonix/utils/ipdrawer"
 	ulog "github.com/cylonix/utils/log"
@@ -22,16 +24,18 @@ import (
 )
 
 type wgHandlerImpl struct {
-	daemon    interfaces.DaemonInterface
-	fwService fwconfig.ConfigService
-	logger    *logrus.Entry
+	daemon      interfaces.DaemonInterface
+	fwService   fwconfig.ConfigService
+	nodeHandler *NodeHandler
+	logger      *logrus.Entry
 }
 
-func newWgHandlerImpl(daemon interfaces.DaemonInterface, fwService fwconfig.ConfigService, logger *logrus.Entry) *wgHandlerImpl {
+func newWgHandlerImpl(daemon interfaces.DaemonInterface, fwService fwconfig.ConfigService, nodeHandler *NodeHandler, logger *logrus.Entry) *wgHandlerImpl {
 	return &wgHandlerImpl{
-		daemon:    daemon,
-		fwService: fwService,
-		logger:    logger.WithField(logfields.LogSubsys, "wg-handler"),
+		daemon:      daemon,
+		fwService:   fwService,
+		nodeHandler: nodeHandler,
+		logger:      logger.WithField(logfields.LogSubsys, "wg-handler"),
 	}
 }
 
@@ -42,7 +46,7 @@ func (w *wgHandlerImpl) List(auth interface{}, requestObject api.ListVpnDeviceRe
 	}
 
 	var (
-		ofUserID *types.UserID
+		ofUserID    *types.UserID
 		ofNamespace *string
 	)
 	if !token.IsAdminUser {
@@ -52,7 +56,10 @@ func (w *wgHandlerImpl) List(auth interface{}, requestObject api.ListVpnDeviceRe
 		ofNamespace = &namespace
 	}
 	params := requestObject.Params
-	list, num, err := db.GetWgInfoList(ofNamespace, ofUserID, params.Contain, params.Page, params.PageSize)
+	list, num, err := db.GetWgInfoList(
+		ofNamespace, ofUserID, params.Contain,
+		params.IsWireguardOnly, params.Page, params.PageSize,
+	)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to list wg devices from db.")
 		return nil, err
@@ -111,26 +118,90 @@ func (w *wgHandlerImpl) Delete(auth interface{}, requestObject api.DeleteVpnDevi
 	return nil
 }
 
-func (w *wgHandlerImpl) Add(auth interface{}, requestObject api.AddVpnDeviceRequestObject) error {
+func (w *wgHandlerImpl) generateNewWgClientConfig(wgInfo *types.WgInfo, params models.AddVpnDeviceParams) (string, error) {
+	wgNode, err := db.GetWgNode(wgInfo.Namespace, wgInfo.WgName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get wg gateway for %v: %w", wgInfo.WgName, err)
+	}
+	gwPublicKeyBase64, err := common.HexToBase64(wgNode.PublicKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode gw public key: %w", err)
+	}
+
+	nodeKey := newNodeKey()
+	nodePrivateKeyHex := nodeKey.UntypedHexString()
+	nodePrivateKeyBase64, err := common.HexToBase64(nodePrivateKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode node private key: %w", err)
+	}
+	nodePublicKeyHex, err := nodeKeyToHex(nodeKey.Public())
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal node public key: %w", err)
+	}
+	machineKey := newMachineKey().Public()
+	machineKeyString, err := machineKey.MarshalText()
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal machine public key: %w", err)
+	}
+
+	wgInfo.PublicKeyHex = nodePublicKeyHex
+	wgInfo.MachineKey = optional.P(string(machineKeyString))
+	if wgInfo.Name == "" {
+		wgInfo.Name = "wg-client"
+	}
+	if err := w.nodeHandler.createWgClientNode(wgInfo); err != nil {
+		return "", fmt.Errorf("failed to create wg client node: %w", err)
+	}
+	dnsConfig := ""
+	dnsServers := params.DNSServers
+	mtu := optional.V(params.Mtu, 1280)
+	if dnsServers != nil && *dnsServers != "" {
+		dnsConfig = fmt.Sprintf("DNS = %v", *dnsServers)
+	}
+
+	// Generate wg client config.
+	wgConfig := fmt.Sprintf(`
+[Interface]
+Address = %v
+PrivateKey = %v
+MTU = %v
+%v
+
+[Peer]
+PublicKey = %v
+AllowedIPs = 0.0.0.0/0
+Endpoint = %v
+PersistentKeepalive = 25
+`,
+		wgInfo.Addresses[0].String(), nodePrivateKeyBase64, mtu,
+		dnsConfig, gwPublicKeyBase64, wgNode.Endpoints[0].String(),
+	)
+	return wgConfig, nil
+}
+
+// Add adds a new wg device for the user. If to generate a wg client config, the
+// request body should contain the gateway wg ID to connect to.
+// The wg client config txt will be returned as a string.
+func (w *wgHandlerImpl) Add(auth interface{}, requestObject api.AddVpnDeviceRequestObject) (string, error) {
 	token, namespace, userID, logger := common.ParseToken(auth, "add-wg-device", "Add wg device", w.logger)
 	if token == nil {
-		return common.ErrModelUnauthorized
+		return "", common.ErrModelUnauthorized
 	}
 	if requestObject.Body == nil {
 		err := errors.New("missing input")
-		return common.NewBadParamsErr(err)
+		return "", common.NewBadParamsErr(err)
 	}
 	params := requestObject.Params
 	if params.UserID != nil && *params.UserID != userID.String() {
 		logger = logger.WithField("target-user-id", *params.UserID)
 		if !token.IsAdminUser {
 			logger.Warnln("Non admin user trying to add wg device to other user.")
-			return common.ErrModelUnauthorized
+			return "", common.ErrModelUnauthorized
 		}
 		id, err := types.ParseID(*params.UserID)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to parse user ID.")
-			return common.NewBadParamsErr(err)
+			return "", common.NewBadParamsErr(err)
 		}
 		userID = id
 	}
@@ -140,28 +211,66 @@ func (w *wgHandlerImpl) Add(auth interface{}, requestObject api.AddVpnDeviceRequ
 	if err != nil {
 		logger.WithError(err).Errorln("failed to get user")
 		if errors.Is(err, db.ErrUserNotExists) {
-			return common.ErrModelUserNotExists
+			return "", common.ErrModelUserNotExists
 		}
-		return common.ErrInternalErr
+		return "", common.ErrInternalErr
 	}
 	logger = logger.WithField(ulog.Username, user.UserBaseInfo.DisplayName)
 
-	// TODO: Check if the WgInfo is correct. nil pointers et al.
 	wgInfo := &types.WgInfo{}
-	if err = wgInfo.FromModel(requestObject.Body); err != nil {
+	genWgClientConfig := optional.Bool(requestObject.Params.GenerateWgClientConfig)
+	if err = wgInfo.FromModel(requestObject.Body, genWgClientConfig); err != nil {
 		logger.WithError(err).Errorln("Failed to parse wg info.")
-		return common.NewBadParamsErr(err)
+		return "", common.NewBadParamsErr(err)
 	}
+
+	// Check to generate wg info missing fields.
+	// e.g. Public key, machine key, allocate ip address et al.
+	// Private key will not be saved and user will need to generate a new
+	// client config if lost.
+	if genWgClientConfig {
+		if wgInfo.PublicKeyHex != "" {
+			err := errors.New("public key should be empty when generating wg client config")
+			logger.WithError(err).Errorln("Invalid params.")
+			return "", common.NewBadParamsErr(err)
+		}
+		if optional.String(wgInfo.MachineKey) != "" {
+			err := errors.New("machine key should be empty when generating wg client config")
+			logger.WithError(err).Errorln("Invalid params.")
+			return "", common.NewBadParamsErr(err)
+		}
+		if len(wgInfo.Addresses) != 0 {
+			err := errors.New("addresses should be empty when generating wg client config")
+			logger.WithError(err).Errorln("Invalid params.")
+			return "", common.NewBadParamsErr(err)
+		}
+		if wgInfo.WgName == "" {
+			err := errors.New("wg gateway must be specified when generating wg client config")
+			logger.WithError(err).Errorln("Invalid params.")
+			return "", common.NewBadParamsErr(err)
+		}
+		config, err := w.generateNewWgClientConfig(wgInfo, requestObject.Params)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to generate wg client config.")
+			return "", common.ErrInternalErr
+		}
+		// Success.
+		re := regexp.MustCompile(`(?i)(PrivateKey\s*=\s*)([^\r\n]+)`)
+		redactedConfig := re.ReplaceAllString(config, "${1}[****]")
+		logger.WithField("config", redactedConfig).Debugln("Generated new wg client config.")
+		return config, nil
+	}
+
 	if err = db.CreateWgInfo(wgInfo); err != nil {
 		common.DeleteDeviceInWgAgent(requestObject.Body)
 		logger.WithError(err).Errorln("Failed to add new wg device.")
 		if errors.Is(err, db.ErrDeviceNotExists) {
-			return common.ErrModelDeviceNotExists
+			return "", common.ErrModelDeviceNotExists
 		}
-		return common.ErrInternalErr
+		return "", common.ErrInternalErr
 	}
 	if wgInfo.WgName == "" {
-		return nil
+		return "", nil
 	}
 
 	logger = logger.WithField(ulog.DeviceID, wgInfo.DeviceID).WithField(ulog.IP, wgInfo.IP)
@@ -169,9 +278,9 @@ func (w *wgHandlerImpl) Add(auth interface{}, requestObject api.AddVpnDeviceRequ
 		common.DeleteDeviceInWgAgent(requestObject.Body)
 		db.DeleteWgInfo(namespace, wgInfo.DeviceID)
 		logger.WithError(err).Errorln("Failed to add ep.")
-		return common.ErrInternalErr
+		return "", common.ErrInternalErr
 	}
-	return nil
+	return "", nil
 }
 
 func (w *wgHandlerImpl) deleteWgDevice(namespace string, deviceID types.DeviceID, wgInfo *types.WgInfo) error {
@@ -199,10 +308,19 @@ func (w *wgHandlerImpl) deleteWgDevice(namespace string, deviceID types.DeviceID
 }
 
 func (w *wgHandlerImpl) ListNodes(auth interface{}, requestObject api.ListWgNodesRequestObject) (total int, list []models.WgNode, err error) {
-	token, namespace, _, logger := common.ParseToken(auth, "list-wg-nodes", "List wg nodes", w.logger)
+	token, namespace, userID, logger := common.ParseToken(auth, "list-wg-nodes", "List wg nodes", w.logger)
 	if token == nil || !token.IsAdminUser {
-		err = common.ErrModelUnauthorized
-		return
+		user := types.User{}
+		err = db.GetUser(userID, &user)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to get user.")
+			err = common.ErrInternalErr
+			return
+		}
+		if !optional.Bool(user.GatewayEnabled) {
+			// No gateway enabled, no wg nodes.
+			return
+		}
 	}
 
 	forNamespace := &namespace
@@ -217,7 +335,7 @@ func (w *wgHandlerImpl) ListNodes(auth interface{}, requestObject api.ListWgNode
 		err = common.ErrInternalErr
 		return
 	}
-	list, err = types.SliceMap(wgNodes, func(wgNode *types.WgNode) (models.WgNode, error){
+	list, err = types.SliceMap(wgNodes, func(wgNode *types.WgNode) (models.WgNode, error) {
 		return *wgNode.ToModel(), nil
 	})
 	return

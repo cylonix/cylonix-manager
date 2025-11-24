@@ -71,11 +71,13 @@ func TestMain(m *testing.M) {
 func TestWgAdd(t *testing.T) {
 	d := dt.NewEmulator()
 	f := fwconfig.NewServiceEmulator()
-	params := api.AddVpnDeviceRequestObject{}
-	h := newWgHandlerImpl(d, f, testLogger)
+	s := NewService(d, f, testLogger)
+	nh := NewNodeHandler(s)
 
+	params := api.AddVpnDeviceRequestObject{}
+	h := newWgHandlerImpl(d, f, nh, testLogger)
 	// Test auth error.
-	err := h.Add(nil, params)
+	_, err := h.Add(nil, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 	}
@@ -85,13 +87,13 @@ func TestWgAdd(t *testing.T) {
 	userIDString := userID.String()
 	params.Params.UserID = &userIDString
 	auth := testUserToken
-	err = h.Add(auth, params)
+	_, err = h.Add(auth, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorAs(t, err, &common.BadParamsErr{})
 	}
 
 	params.Body = &models.WgDevice{}
-	err = h.Add(auth, params)
+	_, err = h.Add(auth, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 	}
@@ -102,7 +104,7 @@ func TestWgAdd(t *testing.T) {
 		Namespace: testNamespace,
 		UserID:    userID.UUID(),
 	}
-	err = h.Add(auth, params)
+	_, err = h.Add(auth, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, common.ErrModelUserNotExists)
 	}
@@ -110,7 +112,7 @@ func TestWgAdd(t *testing.T) {
 	// Test CreateWgInfo error.
 	params.Params.UserID = nil
 	auth = testUserToken
-	err = h.Add(auth, params)
+	_, err = h.Add(auth, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorAs(t, err, &common.BadParamsErr{})
 	}
@@ -134,21 +136,24 @@ func TestWgAdd(t *testing.T) {
 	}
 	params.Body = wgDevice
 	f.AddEndPointError = errors.New("fake-err")
-	err = h.Add(auth, params)
+	_, err = h.Add(auth, params)
 	if assert.NotNil(t, err) {
 		assert.ErrorIs(t, err, common.ErrInternalErr)
 	}
 
 	// Success.
 	f.AddEndPointError = nil
-	assert.Nil(t, h.Add(auth, params))
+	_, err = h.Add(auth, params)
+	assert.Nil(t, err)
 }
 
 func TestWgDelete(t *testing.T) {
 	d := dt.NewEmulator()
 	f := fwconfig.NewServiceEmulator()
+	s := NewService(d, f, testLogger)
+	nh := NewNodeHandler(s)
 	params := api.DeleteVpnDevicesRequestObject{}
-	h := newWgHandlerImpl(d, f, testLogger)
+	h := newWgHandlerImpl(d, f, nh, testLogger)
 
 	// Test auth error.
 	err := h.Delete(nil, params)
@@ -179,7 +184,7 @@ func TestWgDelete(t *testing.T) {
 		WgID:      wgID,
 	}
 	wgInfo := &types.WgInfo{}
-	err = wgInfo.FromModel(wgDevice)
+	err = wgInfo.FromModel(wgDevice, false)
 	if !assert.Nil(t, err) {
 		return
 	}

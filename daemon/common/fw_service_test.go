@@ -287,7 +287,7 @@ func TestFwAddEndpoint(t *testing.T) {
 	defer td.Delete(namespace, userID, deviceID)
 
 	labelName := "test-label-name"
-	err = db.UpdateDevice(namespace, userID, deviceID, &models.DeviceUpdate{
+	err = db.UpdateDeviceFromAPI(namespace, userID, deviceID, &models.DeviceUpdate{
 		AddLabels: &[]models.Label{
 			{Name: labelName},
 		},
@@ -333,7 +333,7 @@ func TestFwDelEndpoint(t *testing.T) {
 	defer func() { r.DelWgPopName(namespace, "wg-ca") }()
 	err = s.DelEndpoint(namespace, "test-endpoint", "1.1.1.1", "wg-ca")
 	if assert.NotNil(t, err) {
-		assert.ErrorIs(t, err, errFwServiceWgNotFound)
+		assert.ErrorIs(t, err, ErrFwConfigNotExists)
 	}
 
 	// Test with fw instances.
@@ -352,7 +352,7 @@ func TestFwDelEndpoint(t *testing.T) {
 	// No pop name mapped for the fw instance. Expects error.
 	err = s.DelEndpoint(namespace, "test-endpoint", "1.1.1.1", "wg-ca")
 	if assert.NotNil(t, err) {
-		assert.ErrorIs(t, err, errFwServiceWgNotFound)
+		assert.ErrorIs(t, err, ErrFwConfigNotExists)
 	}
 	// Set fw instance pop name and expects del to have no error.
 	e1.PopName = "pop-ca"

@@ -42,7 +42,7 @@ const (
 
 type wgHandler interface {
 	List(auth interface{}, requestObject api.ListVpnDeviceRequestObject) (*models.WgDeviceList, error)
-	Add(auth interface{}, requestObject api.AddVpnDeviceRequestObject) error
+	Add(auth interface{}, requestObject api.AddVpnDeviceRequestObject) (string, error)
 	Delete(auth interface{}, requestObject api.DeleteVpnDevicesRequestObject) error
 	ListNodes(auth interface{}, requestObject api.ListWgNodesRequestObject) (int, []models.WgNode, error)
 	DeleteNodes(auth interface{}, requestObject api.DeleteWgNodesRequestObject) error
@@ -50,12 +50,14 @@ type wgHandler interface {
 
 func NewService(daemon interfaces.DaemonInterface, fwService fwconfig.ConfigService, logger *logrus.Entry) *VpnService {
 	logger = logger.WithField(logfields.LogSubsys, "vpn-handler")
-	return &VpnService{
+	s := &VpnService{
 		daemon:    daemon,
 		fwService: fwService,
 		logger:    logger,
-		wgHandler: newWgHandlerImpl(daemon, fwService, logger),
 	}
+	nh := NewNodeHandler(s)
+	s.wgHandler = newWgHandlerImpl(daemon, fwService, nh, logger)
+	return s
 }
 
 func (s *VpnService) Register(d *api.StrictServer) error {
@@ -218,11 +220,9 @@ func (s *VpnService) getApprovedPeers(
 	return machineNodeIDs, nil
 }
 
+// Add a DNS record for the device.
+// Not used for now.
 func (s *VpnService) AddDnsRecord(ip string, hostInfo *tailcfg.Hostinfo) (string, error) {
-	if isMeetServer(hostInfo) {
-		hostname := meetServerHostname(ip)
-		return hostname, s.daemon.AddDnsRecord(hostname, ip)
-	}
 	return "", nil
 }
 
@@ -334,15 +334,6 @@ func (s *VpnService) DerperServers(namespace string) (*map[int]*tailcfg.DERPRegi
 	return &cfg.Servers, nil
 }
 
-func (s *VpnService) WgID(namespace, wgName string) (string, error) {
-	client, err := common.WgClientByName(namespace, wgName)
-	if err != nil {
-		return "", err
-	}
-
-	return client.ID(), nil
-}
-
 func (s *VpnService) listDevice(ctx context.Context, requestObject api.ListVpnDeviceRequestObject) (api.ListVpnDeviceResponseObject, error) {
 	auth := ctx.Value(api.SecurityAuthContextKey)
 	list, err := s.wgHandler.List(auth, requestObject)
@@ -362,9 +353,9 @@ func (s *VpnService) listDevice(ctx context.Context, requestObject api.ListVpnDe
 
 func (s *VpnService) addDevice(ctx context.Context, requestObject api.AddVpnDeviceRequestObject) (api.AddVpnDeviceResponseObject, error) {
 	auth := ctx.Value(api.SecurityAuthContextKey)
-	err := s.wgHandler.Add(auth, requestObject)
+	ret, err := s.wgHandler.Add(auth, requestObject)
 	if err == nil {
-		return api.AddVpnDevice200Response{}, nil
+		return api.AddVpnDevice200TextResponse(ret), nil
 	}
 	if errors.Is(err, common.ErrInternalErr) {
 		return api.AddVpnDevice500JSONResponse{}, nil
@@ -431,23 +422,11 @@ func (s *VpnService) deleteWgNodes(ctx context.Context, requestObject api.Delete
 	}, nil
 }
 
-func isMeetServer(hostinfo *tailcfg.Hostinfo) bool {
-	if hostinfo == nil {
-		return false
-	}
-	for _, tag := range hostinfo.RequestTags {
-		if tag == meetServiceTag {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *VpnService) NewDevice(
 	namespace string, userID types.UserID, nodeID *uint64,
-	machineKey, nodeKeyHex, wgName, os, hostname string,
+	machineKey, nodeKeyHex, wgName, os, hostname string, IsWireGuardOnly bool,
 	addresses []netip.Prefix, srcIP string, routableIPs []netip.Prefix,
-) (*types.Device, error) {
+) (device *types.Device, err error) {
 	log := s.logger.WithFields(logrus.Fields{
 		ulog.Namespace: namespace,
 		ulog.UserID:    userID,
@@ -458,7 +437,6 @@ func (s *VpnService) NewDevice(
 	common.LogWithLongDashes("Add new device start", log)
 	defer common.LogWithLongDashes("Add new device end", log)
 
-	var err error
 	var lat, lng float64
 	if geo, err := utils.NewGeo(srcIP); err == nil && geo != nil {
 		if lat, lng, err = geo.GetLatLng(); err == nil {
@@ -466,39 +444,40 @@ func (s *VpnService) NewDevice(
 		}
 	}
 
-	user, err := db.GetUserByID(&namespace, userID)
+	var user *types.User
+	user, err = db.GetUserByID(&namespace, userID)
 	if err != nil {
 		log.WithError(err).Errorln("Failed to get user from db")
-		return nil, err
+		return
 	}
 
 	wgID := ""
 	if wgName != "" {
 		if common.IsGatewaySupported(namespace, user, userID, types.NilID) {
-			wgClient, err := common.GetAccessPoint(namespace, wgName, lat, lng)
-			if wgClient == nil || err != nil {
-				err = fmt.Errorf("failed to get wg: %w", err)
+			wgClient, newErr := common.GetAccessPoint(namespace, wgName, lat, lng)
+			if wgClient == nil || newErr != nil {
+				err = fmt.Errorf("failed to get wg: %w", newErr)
 				log.WithError(err).Error("Failed to get wg")
-				return nil, err
+				return
 			}
 			if wgClient.Name() != wgName {
 				err = fmt.Errorf("wg mismatch: want '%v' got '%v'", wgName, wgClient.Name())
 				log.WithError(err).Error("Failed to get wg")
-				return nil, err
+				return
 			}
 			wgID = wgClient.ID()
 		} else {
 			err = fmt.Errorf("wg-gateway is not supported for the user")
 			log.WithError(err).Errorln("Failed to create new device.")
-			return nil, err
+			return
 		}
 	}
-	deviceID, err := types.NewID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to allocate a new device id: %w", err)
+	deviceID, newErr := types.NewID()
+	if newErr != nil {
+		return nil, fmt.Errorf("failed to allocate a new device id: %w", newErr)
 	}
 
-	device := &types.Device{
+	device = &types.Device{
 		Model:     types.Model{ID: deviceID},
 		Namespace: namespace,
 		UserID:    userID,
@@ -507,17 +486,18 @@ func (s *VpnService) NewDevice(
 		NameAlias: hostname,
 		Type:      utils.DeviceTypeFromOS(os),
 		WgInfo: &types.WgInfo{
-			Model:        types.Model{ID: deviceID},
-			DeviceID:     deviceID,
-			NodeID:       nodeID,
-			MachineKey:   &machineKey,
-			Addresses:    addresses,
-			Namespace:    namespace,
-			Name:         hostname,
-			PublicKeyHex: nodeKeyHex,
-			WgID:         wgID,
-			WgName:       wgName,
-			AllowedIPs:   addresses,
+			Model:           types.Model{ID: deviceID},
+			DeviceID:        deviceID,
+			NodeID:          nodeID,
+			MachineKey:      &machineKey,
+			Addresses:       addresses,
+			Namespace:       namespace,
+			Name:            hostname,
+			PublicKeyHex:    nodeKeyHex,
+			WgID:            wgID,
+			WgName:          wgName,
+			AllowedIPs:      addresses,
+			IsWireguardOnly: &IsWireGuardOnly,
 		},
 	}
 
@@ -525,54 +505,54 @@ func (s *VpnService) NewDevice(
 
 	if err = db.AddUserDevice(namespace, userID, device); err != nil {
 		log.WithError(err).Errorln("Failed to add user device to db")
-		return nil, err
+		device = nil
+		return
 	}
 	log.Infoln("Device added to db")
 
 	if !common.IsGatewaySupported(namespace, user, userID, deviceID) {
-		return device, nil
+		return
 	}
 
 	wgDevice := device.WgInfo.ToModel()
 	if wgDevice.Name == "" {
-		return device, nil
+		return
 	}
-	failed := false
 	defer func() {
-		if failed {
-			if err := db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}); err != nil {
-				log.WithError(err).Errorln("Failed to roll back the new device added.")
+		if err != nil {
+			if newErr := db.DeleteUserDevices(nil, namespace, userID, []types.DeviceID{deviceID}); newErr != nil {
+				log.WithError(newErr).Errorln("Failed to roll back the new device added.")
 			}
+			device = nil
 		}
 	}()
 
 	// TODO: remove if to support routed wg networks.
 	if wgName == "" {
-		if err := common.CreateDeviceInAllWgAgents(wgDevice); err != nil {
+		if err = common.CreateDeviceInAllWgAgents(wgDevice); err != nil {
 			log.WithError(err).Error("Failed to create device in all wg agents")
-			failed = true
-			return nil, err
 		}
-		return device, nil
+		return
 	}
 
 	if err = common.CreateDeviceInWgAgent(wgDevice); err != nil {
 		log.WithError(err).Error("Failed to create user in wg agent")
-		failed = true
-		return nil, err
+		return
 	}
 	defer func() {
-		if failed {
-			if err := common.DeleteDeviceInWgAgent(wgDevice); err != nil {
-				log.WithError(err).
+		if err != nil {
+			if newErr := common.DeleteDeviceInWgAgent(wgDevice); newErr != nil {
+				log.WithError(newErr).
 					WithField("wg", wgDevice.Name).
 					Errorln("Failed to roll back the newly added device on wg.")
 			}
 		}
 	}()
 	if err = s.fwService.AddEndpoint(namespace, userID, deviceID, ip, wgName); err != nil {
-		log.WithError(err).Errorln("Failed to add endpoint to firewall.")
-		return nil, err
+		if !errors.Is(err, common.ErrFwConfigNotExists) {
+			log.WithError(err).Errorln("Failed to add endpoint to firewall.")
+			return
+		}
 	}
 	return device, nil
 }

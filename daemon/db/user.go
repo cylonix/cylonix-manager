@@ -25,7 +25,7 @@ type UserMetricCount struct {
 }
 
 func GetUserList(
-	namespace *string, onlineOnly bool, 
+	namespace *string, networkDomain *string, onlineOnly bool,
 	filterBy, filterValue, contain, sortBy, sortDesc *string,
 	wgEnable *bool, forUserIDs []types.UserID, page, pageSize *int,
 ) ([]*types.User, int64, error) {
@@ -46,6 +46,9 @@ func GetUserList(
 	}
 	if namespace != nil {
 		pg = pg.Where("namespace = ? ", *namespace)
+	}
+	if networkDomain != nil {
+		pg = pg.Where("network_domain = ? ", *networkDomain)
 	}
 	if onlineOnly {
 		pg = pg.Where("last_seen > ?", time.Now().Unix()-180)

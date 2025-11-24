@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	hstypes "github.com/juanfont/headscale/hscontrol/types"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 	"tailscale.com/control/controlclient"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -50,6 +51,14 @@ func nodeKeyToHex(nodeKey key.NodePublic) (string, error) {
 
 func machineKeyToApprovalReferenceUUID(userID types.UserID, machineKey []byte) uuid.UUID {
 	return uuid.NewSHA1(uuid.Nil, []byte(userID.String()+string(machineKey)))
+}
+
+func newNodeKey() key.NodePrivate {
+	return key.NewNode()
+}
+
+func newMachineKey() key.MachinePrivate {
+	return key.NewMachine()
 }
 
 func nodeIDUint64P(node *hstypes.Node) *uint64 {
@@ -125,14 +134,84 @@ func (n *NodeHandler) updateNode(wgInfo *types.WgInfo, node *hstypes.Node, nodeK
 			update.Addresses = addresses
 			update.AllowedIPs = addresses
 		}
-		if err = db.UpdateWgInfo(wgInfo.DeviceID, update); err != nil {
+		if err = db.UpdateWgInfo(nil, wgInfo.DeviceID, update); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (n *NodeHandler) addNewNode(namespace string, userID types.UserID, machineKey string, node *hstypes.Node) (*types.WgInfo, error) {
+func (n *NodeHandler) createWgClientNode(wgInfo *types.WgInfo) (err error) {
+	var (
+		nodeID       *uint64
+		node         *hstypes.Node
+		user         = &types.User{}
+		userID       = wgInfo.UserID
+		namespace    = wgInfo.Namespace
+		wgServerName = wgInfo.WgName
+	)
+	err = db.GetUser(wgInfo.UserID, user)
+	if err != nil {
+		return
+	}
+
+	// Allocate IP addresses for the node.
+	v4, v6, newErr := vpnpkg.AllocateIP(namespace, userID.String(), *wgInfo.MachineKey, nil, nil)
+	if newErr != nil {
+		err = newErr
+		return
+	}
+	addresses := []netip.Prefix{}
+	if v4 != nil {
+		addresses = append(addresses, netip.PrefixFrom(*v4, 32))
+		defer func() {
+			if err != nil {
+				vpnpkg.ReleaseIP(namespace, v4.String())
+			}
+		}()
+	}
+	if v6 != nil {
+		addresses = append(addresses, netip.PrefixFrom(*v6, 128))
+		defer func() {
+			if err != nil {
+				vpnpkg.ReleaseIP(namespace, v6.String())
+			}
+		}()
+	}
+	wgNode := &types.WgNode{
+		Namespace:    namespace,
+		Name:         wgInfo.Name,
+		PublicKeyHex: wgInfo.PublicKeyHex,
+		Addresses:    addresses,
+	}
+	nodeID, err = vpnpkg.CreateWgNode(&user.UserBaseInfo, wgNode)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			vpnpkg.DeleteNode(*nodeID)
+		}
+	}()
+	node, err = vpnpkg.GetNode(namespace, &userID, *nodeID)
+	if err != nil {
+		return err
+	}
+	_, err = n.addNewNode(namespace, userID, *wgInfo.MachineKey, node, wgServerName)
+	if err != nil {
+		return err
+	}
+
+	// Added the node. Now update the wg info
+	wgInfo.Addresses = addresses
+	wgInfo.NodeID = optional.CopyP(nodeID)
+	return nil
+}
+
+func (n *NodeHandler) addNewNode(
+	namespace string, userID types.UserID, machineKey string,
+	node *hstypes.Node, wgName string,
+) (*types.WgInfo, error) {
 	nodeKeyHex, err := nodeKeyToHex(node.NodeKey)
 	if err != nil {
 		return nil, err
@@ -173,12 +252,10 @@ func (n *NodeHandler) addNewNode(namespace string, userID types.UserID, machineK
 		return nil, err
 	}
 
-	wgName := ""
-
 	device, err := n.vpnService.NewDevice(
 		namespace, userID, nodeIDUint64P(node),
 		machineKey, nodeKeyHex, wgName,
-		os, hostname,
+		os, hostname, optional.Bool(node.IsWireguardOnly),
 		addresses, srcIP, routableIPs,
 	)
 	if err != nil {
@@ -201,7 +278,7 @@ func (n *NodeHandler) updateWgInfoAndRotateNodeKey(
 	defer func() {
 		if err != nil {
 			// Rollback the wg info public key in db.
-			newErr := db.UpdateWgInfo(wgInfo.DeviceID, &types.WgInfo{
+			newErr := db.UpdateWgInfo(nil, wgInfo.DeviceID, &types.WgInfo{
 				PublicKeyHex: oldKey,
 			})
 			if newErr != nil {
@@ -373,7 +450,7 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 	}
 
 	// Device approved or auto-approved.
-	wgInfo, err = n.addNewNode(namespace, userID, string(machineKey), node)
+	wgInfo, err = n.addNewNode(namespace, userID, string(machineKey), node, "")
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +480,7 @@ func (n *NodeHandler) PostAdd(node *hstypes.Node) error {
 	}
 	id := uint64(node.ID)
 	update := types.WgInfo{NodeID: &id}
-	if err = db.UpdateWgInfo(wgInfo.DeviceID, &update); err != nil {
+	if err = db.UpdateWgInfo(nil, wgInfo.DeviceID, &update); err != nil {
 		return err
 	}
 	return nil
@@ -416,6 +493,81 @@ func (n *NodeHandler) Delete(node *hstypes.Node) error {
 }
 
 func (n *NodeHandler) Update(node *hstypes.Node) (*hstypes.Node, error) {
+	wgInfo, err := db.WgInfoByNodeID(node.ID.Uint64())
+	if err != nil {
+		if errors.Is(err, db.ErrDeviceWgInfoNotExists) {
+			return node, nil
+		}
+		return nil, err
+	}
+	if wgInfo.Namespace != optional.String(node.User.Namespace) ||
+		wgInfo.UserID.String() != node.User.Name {
+		return nil, fmt.Errorf("node namespace/userID mismatch")
+	}
+	// Update the wg info for interested fields.
+	var (
+		toUpdate       bool
+		toUpdateDevice bool
+		tx             *gorm.DB
+		update         = types.WgInfo{}
+		deviceUpdate   = types.Device{}
+	)
+
+	nodeKeyHex, err := nodeKeyToHex(node.NodeKey)
+	if err != nil {
+		return nil, err
+	}
+	if nodeKeyHex != wgInfo.PublicKeyHex {
+		update.PublicKeyHex = nodeKeyHex
+		toUpdate = true
+	}
+	if node.GivenName != "" && node.GivenName != wgInfo.Name {
+		update.Name = node.GivenName
+		deviceUpdate.Name = node.GivenName
+		toUpdate = true
+		toUpdateDevice = true
+	}
+	if node.LastSeen != nil && (*node.LastSeen).Unix() != wgInfo.LastSeen {
+		update.LastSeen = (*node.LastSeen).Unix()
+		toUpdate = true
+		deviceUpdate.LastSeen = (*node.LastSeen).Unix()
+		toUpdateDevice = true
+	}
+	if node.LastSeen == nil && wgInfo.LastSeen != 0 {
+		update.LastSeen = 0
+		deviceUpdate.LastSeen = 0
+		toUpdate = true
+		toUpdateDevice = true
+	}
+	if optional.Bool(node.IsWireguardOnly) != optional.Bool(wgInfo.IsWireguardOnly) {
+		v := optional.Bool(node.IsWireguardOnly)
+		update.IsWireguardOnly = &v
+		toUpdate = true
+	}
+	if toUpdate || toUpdateDevice {
+		tx, err = db.BeginTransaction()
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+	}
+	if toUpdate {
+		if err := db.UpdateWgInfo(tx, wgInfo.DeviceID, &update); err != nil {
+			return nil, err
+		}
+	}
+	if toUpdateDevice {
+		if err := db.UpdateDevice(
+			tx, wgInfo.Namespace, wgInfo.UserID, wgInfo.DeviceID, &deviceUpdate,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if tx != nil {
+		if err := tx.Commit().Error; err != nil {
+			return nil, err
+		}
+	}
 	return node, nil
 }
 
@@ -502,7 +654,7 @@ func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID
 			return nil, nil, nil, controlclient.UserVisibleError("machine needs approval")
 		}
 		// Device is approved. Add it back.
-		wgInfo, err = n.addNewNode(approval.Namespace, approval.UserID, string(machineKey), node)
+		wgInfo, err = n.addNewNode(approval.Namespace, approval.UserID, string(machineKey), node, "")
 		if err != nil {
 			return nil, nil, nil, controlclient.UserVisibleError("machine failed to be added: " + err.Error())
 		}

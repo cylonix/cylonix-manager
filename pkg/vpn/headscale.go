@@ -28,6 +28,7 @@ import (
 )
 
 var (
+	ignoreHeadscaleInitError   = false
 	ErrHeadscaleNotInitialized = errors.New("headscale is not yet initialized")
 )
 
@@ -122,7 +123,9 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 	response, err := client.GetUser(ctx, request)
 	user := &hstypes.User{}
 	if err == nil {
-		if response.User != nil && response.User.Network != userInfo.Network {
+		if response.User != nil &&
+			response.User.Network != userInfo.Network &&
+			userInfo.Network != "" {
 			logger.WithFields(logrus.Fields{
 				"namespace": userInfo.Namespace,
 				"user-id":   userInfo.UserID,
@@ -149,6 +152,12 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 }
 
 func DeleteHsUser(namespace, network string, userID types.UserID) error {
+	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
+		return ErrHeadscaleNotInitialized
+	}
 	request := &v1.DeleteUserRequest{
 		Name:      userID.String(),
 		Namespace: &namespace,
@@ -166,6 +175,9 @@ func DeleteHsUser(namespace, network string, userID types.UserID) error {
 
 func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*string, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
 		return nil, ErrHeadscaleNotInitialized
 	}
 	user, err := getOrCreateHsUser(userInfo)
@@ -193,6 +205,9 @@ func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*stri
 
 func CreateApiKey(token *utils.UserTokenData, isNetworkAdmin bool) (*string, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
 		return nil, ErrHeadscaleNotInitialized
 	}
 	user, err := getOrCreateHsUser(&UserInfo{
@@ -240,6 +255,9 @@ func CreateApiKey(token *utils.UserTokenData, isNetworkAdmin bool) (*string, err
 
 func RefreshApiKey(prefix string) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	request := &v1.RefreshApiKeyRequest{
@@ -254,6 +272,9 @@ func RefreshApiKey(prefix string) error {
 
 func GetPreAuthKey(namespace string, id uint64) (*v1.PreAuthKey, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
 		return nil, ErrHeadscaleNotInitialized
 	}
 	request := &v1.ListPreAuthKeysRequest{
@@ -276,6 +297,9 @@ func GetPreAuthKey(namespace string, id uint64) (*v1.PreAuthKey, error) {
 
 func DeleteNode(nodeID uint64) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	request := &v1.DeleteNodeRequest{
@@ -294,10 +318,13 @@ func DeleteNode(nodeID uint64) error {
 // GetNode returns nil if node does not exist.
 func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
 		return nil, ErrHeadscaleNotInitialized
 	}
 	request := &v1.GetNodeRequest{
-		NodeId:    nodeID,
+		NodeId: nodeID,
 	}
 	client := getHsClient()
 	ctx, cancel := newHsClientContext()
@@ -310,7 +337,7 @@ func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, 
 		}
 		return nil, err
 	}
-	node, err := hstypes.ParseProtoNode(response.Node)
+	node, err := hstypes.ParseProtoNode(response.Node, false)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +355,9 @@ func ListNodes(
 	filterBy, filterValue, sortBy *string, sortDesc *bool, page, pageSize *uint32,
 ) (uint32, []*hstypes.Node, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return 0, nil, nil
+		}
 		return 0, nil, ErrHeadscaleNotInitialized
 	}
 	var user string
@@ -355,7 +385,7 @@ func ListNodes(
 	}
 	var list []*hstypes.Node
 	for _, p := range response.Nodes {
-		n, err := hstypes.ParseProtoNode(p)
+		n, err := hstypes.ParseProtoNode(p, false)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -366,6 +396,9 @@ func ListNodes(
 
 func CreateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*uint64, error) {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
 		return nil, ErrHeadscaleNotInitialized
 	}
 
@@ -422,12 +455,12 @@ func wgNodeToProtoNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*v1.Node, 
 	}
 
 	logger.WithFields(logrus.Fields{
-			"namespace": wgNode.Namespace,
-			"node_id":   wgNode.NodeID,
-			"node":      wgNode.Name,
-			"online":    optional.Bool(wgNode.IsOnline),
-			"last_seen": wgNode.LastSeen,
-		}).
+		"namespace": wgNode.Namespace,
+		"node_id":   wgNode.NodeID,
+		"node":      wgNode.Name,
+		"online":    optional.Bool(wgNode.IsOnline),
+		"last_seen": wgNode.LastSeen,
+	}).
 		Debug("Updating wg node")
 
 	// Stay below version 26 as we cannot do DoH on wg node yet.
@@ -456,6 +489,9 @@ func wgNodeToProtoNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*v1.Node, 
 
 func UpdateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	node, err := wgNodeToProtoNode(su, wgNode)
@@ -477,6 +513,9 @@ func UpdateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) error {
 
 func UpdateNodeCapabilities(namespace string, nodeID uint64, addCapabilities, delCapabilities []string) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	request := &v1.UpdateNodeRequest{
@@ -494,6 +533,9 @@ func UpdateNodeCapabilities(namespace string, nodeID uint64, addCapabilities, de
 
 func UpdateUserNetworkDomain(namespace string, userID types.UserID, networkDomain string) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	request := &v1.UpdateUserNetworkDomainRequest{
@@ -510,6 +552,9 @@ func UpdateUserNetworkDomain(namespace string, userID types.UserID, networkDomai
 
 func UpdateUserPeers(namespace string, userID types.UserID) error {
 	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
 		return ErrHeadscaleNotInitialized
 	}
 	request := &v1.UpdateUserPeersRequest{
@@ -521,4 +566,8 @@ func UpdateUserPeers(namespace string, userID types.UserID) error {
 	defer cancel()
 	_, err := client.UpdateUserPeers(ctx, request)
 	return err
+}
+
+func SetIgnoreHeadscaleInitError(ignore bool) {
+	ignoreHeadscaleInitError = ignore
 }

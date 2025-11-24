@@ -62,6 +62,7 @@ func ListWgNodes(namespace *string, page *int, pageSize *int) (total int, list [
 	}
 	tx = postgres.Page(tx, count, page, pageSize)
 	err = tx.Find(&list).Error
+	total = int(count)
 	return
 }
 

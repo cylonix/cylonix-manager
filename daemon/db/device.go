@@ -422,7 +422,7 @@ func DeviceByIP(namespace, ip string) (*types.Device, error) {
 		return nil, err
 	}
 	d := &types.Device{}
-	if err := postgres.SelectFirst(d, "namespace = ? and id = ?", namespace, w.DeviceID); err != nil {
+	if err := postgres.SelectOne(d, "namespace = ? and id = ?", namespace, w.DeviceID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrDeviceNotExists
 		}
@@ -433,7 +433,7 @@ func DeviceByIP(namespace, ip string) (*types.Device, error) {
 
 func GetWgInfoOfDevice(namespace string, deviceID types.DeviceID) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
-	err := postgres.SelectFirst(ret, &types.WgInfo{Namespace: namespace, DeviceID: deviceID})
+	err := postgres.SelectOne(ret, &types.WgInfo{Namespace: namespace, DeviceID: deviceID})
 	if err == nil {
 		return ret, nil
 	}
@@ -444,7 +444,7 @@ func GetWgInfoOfDevice(namespace string, deviceID types.DeviceID) (*types.WgInfo
 }
 func WgInfoByIP(namespace, ip string) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
-	if err := postgres.SelectFirst(ret, "namespace = ? and addresses like ?", namespace, ip); err != nil {
+	if err := postgres.SelectOne(ret, "namespace = ? and addresses like ?", namespace, ip); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrDeviceWgInfoNotExists
 		}
@@ -454,7 +454,7 @@ func WgInfoByIP(namespace, ip string) (*types.WgInfo, error) {
 }
 func WgInfoByMachineKey(namespace string, userID types.UserID, machineKey string) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
-	if err := postgres.SelectFirst(ret, &types.WgInfo{
+	if err := postgres.SelectOne(ret, &types.WgInfo{
 		UserID:     userID,
 		MachineKey: &machineKey,
 	}); err != nil {
@@ -470,7 +470,7 @@ func WgInfoByMachineKey(namespace string, userID types.UserID, machineKey string
 }
 func WgInfoByMachineAndNodeKeys(machineKey, nodeKeyHex string) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
-	if err := postgres.SelectFirst(ret, &types.WgInfo{
+	if err := postgres.SelectOne(ret, &types.WgInfo{
 		MachineKey:   &machineKey,
 		PublicKeyHex: nodeKeyHex,
 	}); err != nil {
@@ -483,7 +483,7 @@ func WgInfoByMachineAndNodeKeys(machineKey, nodeKeyHex string) (*types.WgInfo, e
 }
 func WgInfoByNodeID(nodeID uint64) (*types.WgInfo, error) {
 	ret := &types.WgInfo{}
-	if err := postgres.SelectFirst(ret, &types.WgInfo{NodeID: &nodeID}); err != nil {
+	if err := postgres.SelectOne(ret, &types.WgInfo{NodeID: &nodeID}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrDeviceWgInfoNotExists
 		}
@@ -503,8 +503,9 @@ func GetWgInfoListByWgName(namespace, wgName string) ([]*types.WgInfo, error) {
 	}
 	return ret, nil
 }
-func GetWgInfoList(namespace *string, userID *types.UserID, contain *string,
-	page, pageSize *int,
+func GetWgInfoList(
+	namespace *string, userID *types.UserID, contain *string,
+	isWireguardOnly *bool, page, pageSize *int,
 ) ([]*types.WgInfo, int64, error) {
 	pg, err := postgres.Connect()
 	if err != nil {
@@ -520,6 +521,9 @@ func GetWgInfoList(namespace *string, userID *types.UserID, contain *string,
 	if contain != nil {
 		c := like(*contain)
 		pg = pg.Where("wg_name like ? or namespace like ?", c, c)
+	}
+	if isWireguardOnly != nil {
+		pg = pg.Where("is_wireguard_only = ?", *isWireguardOnly)
 	}
 	var total int64
 	if err = pg.Count(&total).Error; err != nil {
@@ -673,20 +677,23 @@ func UpdateDeviceLastSeen(namespace string, userID types.UserID, deviceID types.
 	return tx.Commit().Error
 }
 
-func UpdateWgInfo(deviceID types.DeviceID, updateWgInfo *types.WgInfo) error {
+func UpdateWgInfo(tx *gorm.DB, deviceID types.DeviceID, updateWgInfo *types.WgInfo) error {
 	if !updateWgInfo.ID.IsNil() ||
 		!updateWgInfo.DeviceID.IsNil() ||
 		!updateWgInfo.UserID.IsNil() {
 		return ErrBadParams
 	}
-	pg, err := postgres.Connect()
-	if err != nil {
+	if tx == nil {
+		pg, err := postgres.Connect()
+		if err != nil {
+			return err
+		}
+		tx = pg
+	}
+	if err := updateWgInfo.BeforeSave(tx); err != nil {
 		return err
 	}
-	if err = updateWgInfo.BeforeSave(pg); err != nil {
-		return err
-	}
-	return pg.
+	return tx.
 		Model(&types.WgInfo{Model: types.Model{ID: deviceID}}).
 		Updates(*updateWgInfo).Error
 }
@@ -743,7 +750,25 @@ func getLabelIDs(tx *gorm.DB, namespace string, labels types.LabelList) error {
 	return nil
 }
 
-func UpdateDevice(namespace string, userID types.UserID, deviceID types.DeviceID, u *models.DeviceUpdate) error {
+func UpdateDevice(tx *gorm.DB, namespace string, userID types.UserID, deviceID types.DeviceID, update *types.Device) error {
+	lockCache(userID.String())
+	defer unlockCache(userID.String())
+	if err := clearDeviceCache(namespace, userID, deviceID); err != nil {
+		return err
+	}
+	if tx == nil {
+		pg, err := postgres.Connect()
+		if err != nil {
+			return err
+		}
+		tx = pg
+	}
+	return tx.Model(&types.Device{Model: types.Model{ID: deviceID}}).
+		Where("namespace = ? and user_id = ?", namespace, userID).
+		Updates(update).Error
+}
+
+func UpdateDeviceFromAPI(namespace string, userID types.UserID, deviceID types.DeviceID, u *models.DeviceUpdate) error {
 	if namespace == "" || deviceID.IsNil() || userID.IsNil() {
 		return ErrBadParams
 	}

@@ -14,6 +14,7 @@ import (
 	dt "cylonix/sase/pkg/test/daemon"
 	dbt "cylonix/sase/pkg/test/db"
 	rt "cylonix/sase/pkg/test/resource"
+	"cylonix/sase/pkg/vpn"
 	"flag"
 	"fmt"
 	"log"
@@ -41,10 +42,12 @@ func testSetup() error {
 	if !testing.Verbose() {
 		testLogger.Logger.SetLevel(logrus.WarnLevel)
 	}
+	vpn.SetIgnoreHeadscaleInitError(true)
 	return nil
 }
 
 func testCleanup() {
+	vpn.SetIgnoreHeadscaleInitError(false)
 	db.CleanupEmulator()
 }
 func TestMain(m *testing.M) {
@@ -89,7 +92,7 @@ func addTenantAndAdminToken(namespace string) (*utils.UserTokenData, error) {
 func delTenantAndAdminToken(t *testing.T, namespace string, adminToken *utils.UserTokenData) {
 	assert.Nil(t, adminToken.Delete())
 	if !assert.Nil(t, db.DeleteUserTierByName(namespace+"-tier")) {
-		users, _, err := db.GetUserList(&namespace, false, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		users, _, err := db.GetUserList(&namespace, nil, false, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Errorf("Failed to get user list for namespace %s: %v", namespace, err)
 		}
@@ -110,6 +113,13 @@ func TestUser(t *testing.T) {
 	if !assert.Nil(t, err) {
 		return
 	}
+
+	adminUser, err := addAdminUser(namespace)
+	if !assert.Nil(t, err) || !assert.NotNil(t, adminUser) {
+		return
+	}
+	defer assertDeleteUser(t, namespace, adminUser.ID)
+	adminToken.UserID = adminUser.ID.UUID()
 
 	t.Run("post-user", func(t *testing.T) {
 		username := "username-test-001"
@@ -907,12 +917,19 @@ func TestAccessPoint(t *testing.T) {
 	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-access-point"
 	username := "username-test-access-point"
-
-	wgName0 := "wg-name-0"
-	userID, err := types.NewID()
+	adminToken, err := addTenantAndAdminToken(namespace)
+	defer delTenantAndAdminToken(t, namespace, adminToken)
 	if !assert.Nil(t, err) {
 		return
 	}
+	user, err := addUser(namespace, username)
+	if !assert.Nil(t, err) || !assert.NotNil(t, user) {
+		return
+	}
+	defer db.DeleteUser(nil, namespace, user.ID)
+	userID := user.ID
+
+	wgName0 := "wg-name-0"
 	_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
 
 	d := dt.NewEmulator()

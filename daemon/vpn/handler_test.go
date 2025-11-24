@@ -27,7 +27,7 @@ func TestNewDevice(t *testing.T) {
 	)
 	device, err := h.NewDevice(
 		namespace, userID, &nodeID, machineKey, nodeKeyHex, "", "linux", "test-pc",
-		[]netip.Prefix{ip}, "11.0.0.1", nil,
+		false, []netip.Prefix{ip}, "11.0.0.1", nil,
 	)
 	if !assert.Nil(t, err) || !assert.NotNil(t, device) {
 		return

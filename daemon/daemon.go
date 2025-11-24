@@ -449,10 +449,16 @@ func (d *Daemon) GlobalConfig() interfaces.GlobalConfigInterface {
 }
 
 func (d *Daemon) AddDnsRecord(hostname, ip string) error {
+	if d.dnsServer == nil {
+		return nil
+	}
 	return d.dnsServer.AddRecord(hostname, ip, d.domainName)
 }
 
 func (d *Daemon) DelDnsRecord(hostname, ip string) error {
+	if d.dnsServer == nil {
+		return nil
+	}
 	return d.dnsServer.DelRecord(hostname, ip, d.domainName)
 }
 

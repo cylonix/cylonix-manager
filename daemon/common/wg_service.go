@@ -58,7 +58,7 @@ type WgClientApi struct {
 	name string
 }
 
-func hexToBase64(s string) (string, error) {
+func HexToBase64(s string) (string, error) {
 	v, err := hex.DecodeString(s)
 	if err != nil {
 		return "", err
@@ -78,7 +78,7 @@ func httpResponseString(resp *http.Response) string {
 func (w *WgClientApi) CreateUsers(ctx context.Context, namespace string, users []*types.WgInfo) error {
 	namespace = Namespace(namespace).WgNamespace().String()
 	wgUsers, err := types.SliceMap(users, func(wgInfo *types.WgInfo) (wg_agent.WgUser, error) {
-		publicKeyBase64, err := hexToBase64(wgInfo.PublicKeyHex)
+		publicKeyBase64, err := HexToBase64(wgInfo.PublicKeyHex)
 		if err != nil {
 			return wg_agent.WgUser{}, err
 		}
@@ -107,7 +107,7 @@ func (w *WgClientApi) CreateUsers(ctx context.Context, namespace string, users [
 
 func (w *WgClientApi) CreateUser(ctx context.Context, namespace, username, wgUserID, deviceID, publicKeyHex string, allowedIPs []string) error {
 	namespace = Namespace(namespace).WgNamespace().String()
-	publicKeyBase64, err := hexToBase64(publicKeyHex)
+	publicKeyBase64, err := HexToBase64(publicKeyHex)
 	if err != nil {
 		return err
 	}
@@ -557,7 +557,7 @@ func (c *WgClient) sendUsers(namespace string, logger *logrus.Entry) {
 	// TODO: remove the following once we support routed wg networks.
 	// This is to program all the peers in the wg-gateways so that app
 	// does not need to update their wg of choice for now.
-	allWgInfos, _, err := db.GetWgInfoList(&namespace, nil, nil, nil, nil)
+	allWgInfos, _, err := db.GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get all wg infos from db.")
 		return

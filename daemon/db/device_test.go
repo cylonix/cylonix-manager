@@ -157,7 +157,7 @@ func TestDeviceDB(t *testing.T) {
 			Name:      &name,
 			NameAlias: &nameAlias,
 		}
-		err = UpdateDevice(namespace, userID, idList[1], update)
+		err = UpdateDeviceFromAPI(namespace, userID, idList[1], update)
 		if assert.Nil(t, err) {
 			newDevice, err := GetUserDeviceFast(namespace, userID, idList[1])
 			assert.Nil(t, err)
@@ -190,13 +190,13 @@ func TestDeviceDB(t *testing.T) {
 				assert.Equal(t, ip, wgInfo.Addresses[0].String())
 			}
 		}
-		wgInfoList, total, err := GetWgInfoList(&namespace, nil, nil, nil, nil)
+		wgInfoList, total, err := GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
 		if assert.Nil(t, err) {
 			assert.Equal(t, len(wgInfoList), 1)
 			assert.Equal(t, len(wgInfoList), int(total))
 		}
 		wgName := "ca-1"
-		err = UpdateWgInfo(idList[1], &types.WgInfo{WgName: wgName})
+		err = UpdateWgInfo(nil, idList[1], &types.WgInfo{WgName: wgName})
 		assert.Nil(t, err)
 
 		wgInfo, err = GetWgInfoOfDevice(namespace, idList[1])
@@ -209,7 +209,7 @@ func TestDeviceDB(t *testing.T) {
 		upd := &types.WgInfo{
 			Addresses: []netip.Prefix{netip.MustParsePrefix(ip)},
 		}
-		err = UpdateWgInfo(idList[1], upd)
+		err = UpdateWgInfo(nil, idList[1], upd)
 		if assert.NoError(t, err) {
 			wgInfo, err = GetWgInfoOfDevice(namespace, idList[1])
 			if assert.NoError(t, err) && assert.NotNil(t, wgInfo) {
@@ -221,7 +221,7 @@ func TestDeviceDB(t *testing.T) {
 
 		err = DeleteWgInfo(namespace, idList[1])
 		assert.Nil(t, err)
-		wgInfoList, total, err = GetWgInfoList(&namespace, nil, nil, nil, nil)
+		wgInfoList, total, err = GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
 		if assert.Nil(t, err) {
 			assert.Equal(t, len(wgInfoList), 0)
 			assert.Equal(t, len(wgInfoList), int(total))

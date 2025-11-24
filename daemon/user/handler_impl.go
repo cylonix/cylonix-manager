@@ -67,10 +67,25 @@ func (h *handlerImpl) GetUserList(auth interface{}, requestObject api.GetUserLis
 		namespaceP = &namespace
 	}
 
-	// Only admin user can get other user's information.
+	var ofNetworkDomain *string
+
+	// Only admin or network admin user can get other user's information.
 	if !token.IsAdminUser {
 		if len(idList) != 1 || idList[0] != userID {
-			return nil, common.ErrModelUnauthorized
+			user, err := db.GetUserByID(&namespace, userID)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user.")
+				return nil, common.ErrInternalErr
+			}
+			if !user.IsNetworkAdmin() {
+				if len(idList) == 0 {
+					idList = []types.UserID{userID}
+				} else {
+					return nil, common.ErrModelUnauthorized
+				}
+			} else {
+				ofNetworkDomain = user.NetworkDomain
+			}
 		}
 	} else {
 		if params.Username != nil && *params.Username != "" {
@@ -92,7 +107,7 @@ func (h *handlerImpl) GetUserList(auth interface{}, requestObject api.GetUserLis
 	}
 
 	userList, total, err := db.GetUserList(
-		namespaceP,
+		namespaceP, ofNetworkDomain,
 		optional.Bool(params.OnlineOnly),
 		params.FilterBy, params.FilterValue, nil,
 		params.SortBy, params.SortDesc, nil, idList, params.Page,
@@ -533,7 +548,7 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 			}
 		} else {
 			fromUser := types.User{}
-			if err := db.GetUser(userID, fromUser); err != nil {
+			if err := db.GetUser(userID, &fromUser); err != nil {
 				logger.WithError(err).Errorln("Failed to get user.")
 				return common.ErrInternalErr
 			}
@@ -612,13 +627,13 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 	}
 	defer tx.Rollback()
 
-	requstor, err := db.GetUserFast(ofNamespace, userID, false)
+	requestor, err := db.GetUserFast(ofNamespace, userID, false)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get user.")
 		return common.ErrInternalErr
 	}
-	isNetworkOwner := requstor.IsNetworkOwner()
-	ofNetwork := optional.String(requstor.NetworkDomain)
+	isNetworkOwner := requestor.IsNetworkOwner()
+	ofNetwork := optional.String(requestor.NetworkDomain)
 	if isNetworkOwner {
 		userIDsOfNetwork, err := db.GetUserIDList(tx, ofNamespace, &ofNetwork)
 		if err != nil {

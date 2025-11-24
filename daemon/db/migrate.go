@@ -149,6 +149,18 @@ var (
 			},
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
+				{
+			ID: "2025011170900",
+			Migrate: func(tx *gorm.DB) error {
+				log.Printf(`
+					Migrating to add IsWireguardOnly field support.
+				`)
+				return tx.AutoMigrate(
+					&types.WgInfo{},
+				)
+			},
+			Rollback: func(db *gorm.DB) error { return nil },
+		},
 	}
 )
 

@@ -73,7 +73,7 @@ func (d *Device) ToModel() *models.Device {
 
 func (d *Device) FromModel(namespace string, m *models.Device) error {
 	var wgInfo WgInfo
-	if err := wgInfo.FromModel(m.WgInfo); err != nil {
+	if err := wgInfo.FromModel(m.WgInfo, false); err != nil {
 		return err
 	}
 	var labels LabelList
@@ -141,6 +141,8 @@ type WgInfo struct {
 	UserID       UserID `gorm:"type:uuid;uniqueIndex:wg_info_user_id_machine_key"`
 	WgID         string // Wg exit node ID. Only set if it has an exit wg node.
 	WgName       string // Wg exit node Name. Only set if it has an exit wg node.
+
+	IsWireguardOnly *bool // Whether this device is WireGuard-only device.
 }
 
 func (w *WgInfo) BeforeSave(tx *gorm.DB) error {
@@ -176,12 +178,18 @@ func (wgInfo *WgInfo) ToModel() *models.WgDevice {
 	if wgInfo == nil {
 		return nil
 	}
+	var nodeID *int64
+	if wgInfo.NodeID != nil {
+		v := int64(*wgInfo.NodeID)
+		nodeID = &v
+	}
 	modelsWgInfo := &models.WgDevice{
 		DeviceID:   wgInfo.DeviceID.UUID(),
 		Addresses:  strings.Split(wgInfo.Addresses_, " "),
 		LastSeen:   optional.Int64P(wgInfo.LastSeen),
 		Name:       wgInfo.Name,
 		Namespace:  wgInfo.Namespace,
+		NodeID:     nodeID,
 		PublicKey:  wgInfo.PublicKeyHex,
 		WgID:       wgInfo.WgID,
 		WgName:     optional.StringP(wgInfo.WgName),
@@ -191,11 +199,14 @@ func (wgInfo *WgInfo) ToModel() *models.WgDevice {
 
 	return modelsWgInfo
 }
-func (wgInfo *WgInfo) FromModel(m *models.WgDevice) error {
+func (wgInfo *WgInfo) FromModel(m *models.WgDevice, toGenerateConfig bool) error {
 	if m == nil {
 		return nil
 	}
-	if m.Namespace == "" || m.PublicKey == "" || len(m.Addresses) <= 0 {
+	if m.Namespace == "" {
+		return ErrInvalidWgInfo
+	}
+	if !toGenerateConfig && (m.PublicKey == "" || len(m.Addresses) <= 0) {
 		return ErrInvalidWgInfo
 	}
 	addresses, err := ParsePrefixes(m.Addresses)
@@ -206,6 +217,11 @@ func (wgInfo *WgInfo) FromModel(m *models.WgDevice) error {
 	if err != nil {
 		return ErrInvalidWgInfo
 	}
+	var nodeID *uint64
+	if m.NodeID != nil {
+		v := uint64(*m.NodeID)
+		nodeID = &v
+	}
 
 	*wgInfo = WgInfo{
 		UserID:       UUIDToID(m.UserID),
@@ -214,6 +230,7 @@ func (wgInfo *WgInfo) FromModel(m *models.WgDevice) error {
 		PublicKeyHex: m.PublicKey,
 		Addresses:    addresses,
 		Namespace:    m.Namespace,
+		NodeID:       nodeID,
 		WgID:         m.WgID,
 		WgName:       optional.String(m.WgName),
 		AllowedIPs:   allowedIPs,

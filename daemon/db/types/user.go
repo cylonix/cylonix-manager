@@ -219,6 +219,8 @@ func (u *User) ToModel() *models.User {
 		},
 		Attributes: ma,
 		UserTier:   u.UserTier.ToModel(),
+		CreatedAt:  optional.P(u.CreatedAt.Unix()),
+		UpdatedAt:  optional.P(u.UpdatedAt.Unix()),
 	}
 }
 

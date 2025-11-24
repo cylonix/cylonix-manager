@@ -65,10 +65,10 @@ func UpdateLoginUsernamePassword(
 			return err
 		}
 		commit = true
+		tx = tx.Begin()
+		defer tx.Rollback()
 	}
 	namespace := l.Namespace
-	tx = tx.Begin()
-	defer tx.Rollback()
 
 	tx = tx.Model(l).Where("id = ? and namespace = ?", l.ID, namespace)
 	if err = tx.Updates(&update).Error; err != nil {

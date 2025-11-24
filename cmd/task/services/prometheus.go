@@ -385,7 +385,7 @@ func (n *namespaceTask) updateDeviceStats(deviceID types.DeviceID, v *trafficSta
 		RxBytes:  optional.Uint64(v.RxBytes),
 		TxBytes:  optional.Uint64(v.TxBytes),
 	}
-	if err := db.UpdateWgInfo(deviceID, update); err != nil {
+	if err := db.UpdateWgInfo(nil, deviceID, update); err != nil {
 		return fmt.Errorf("failed to update wg info: %w", err)
 	}
 	return nil

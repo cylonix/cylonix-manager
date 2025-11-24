@@ -191,7 +191,7 @@ func (h *handlerImpl) PutDevice(auth interface{}, requestObject api.PutDeviceReq
 	}
 
 	// Update postgres db.
-	err = db.UpdateDevice(namespace, device.UserID, deviceID, update)
+	err = db.UpdateDeviceFromAPI(namespace, device.UserID, deviceID, update)
 	if err != nil {
 		log.WithError(err).Error("Update device failed")
 		err = common.ErrInternalErr
