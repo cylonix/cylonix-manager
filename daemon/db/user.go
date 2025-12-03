@@ -168,7 +168,7 @@ func GetUserIDList(tx *gorm.DB, namespace string, network *string) ([]types.User
 	var userIDs []types.UserID
 	query := tx.Model(&types.User{}).Select("id").Where("namespace = ?", namespace)
 	if network != nil {
-		query = query.Where("network = ?", *network)
+		query = query.Where("network_domain = ?", *network)
 	}
 	err := query.Find(&userIDs).Error
 	if err != nil {

@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"strings"
 	"time"
 
 	"github.com/cylonix/utils"
@@ -88,10 +87,6 @@ func (s *VpnService) resource() interfaces.ResourceServiceInterface {
 	return s.daemon.ResourceService()
 }
 
-func meetServerHostname(ip string) string {
-	return "meet-" + strings.Replace(ip, ".", "-", -1)
-}
-
 func (s *VpnService) ActiveWgName(namespace, wgName string) string {
 	log := s.logger.WithField(ulog.WgName, wgName).WithField(ulog.Namespace, namespace)
 	wgClient, err := common.WgClientByName(namespace, wgName)
@@ -121,7 +116,6 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		ulog.DeviceID:  m.DeviceID.String(),
 		ulog.IP:        optional.String(m.IP()),
 	})
-	common.LogWithLongDashes("Get peers", log)
 	var (
 		namespace = m.Namespace
 		deviceID  = m.DeviceID
@@ -158,7 +152,7 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		ulog.LargeDebug: ulog.Netmap,
 		ulog.Self:       m.ConciseString(),
 		"peer-count":    len(peers),
-	}).Debugln("result")
+	}).Traceln("result")
 	return peers, onlinePeers, nil
 }
 
@@ -172,13 +166,11 @@ func (s *VpnService) getApprovedPeers(
 	logger *logrus.Entry,
 ) ([]uint64, error) {
 	log := logger.WithField(ulog.SubHandle, "get-approved-peers").WithField(ulog.DeviceID, deviceID)
-	common.LogWithLongDashes("Get approved peers", log)
-
 	mode := optional.String(user.MeshVpnMode)
 	if mode == "" {
 		mode = s.daemon.DefaultMeshMode(namespace, log)
 	}
-	log.WithField(ulog.UserMode, mode).Debugln("check user mode")
+	log.WithField(ulog.UserMode, mode).Traceln("check user mode")
 
 	// Always get the user devices.
 	machineNodeIDs, err := s.ListUserEntry(namespace, &userID)

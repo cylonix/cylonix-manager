@@ -105,7 +105,7 @@ func delTenantAndAdminToken(t *testing.T, namespace string, adminToken *utils.Us
 	assert.Nil(t, db.DeleteTenantConfigByNamespace(namespace))
 }
 
-func TestUser(t *testing.T) {
+func TestUserHandlers(t *testing.T) {
 	handler := newHandlerImpl(nil, testLogger)
 	namespace := "namespace-test-user"
 	adminToken, err := addTenantAndAdminToken(namespace)
@@ -321,16 +321,124 @@ func TestUser(t *testing.T) {
 			assert.Nil(t, password.CompareToHash(newPasswd, login.Credential))
 		}
 	})
+	t.Run("delete-users", func(t *testing.T) {
+		username := "test-delete-users-username"
+		user, err := addUser(namespace, username)
+		if !assert.Nil(t, err) || !assert.NotNil(t, user) {
+			return
+		}
+		userID := user.ID
+		defer db.DeleteUser(nil, namespace, userID)
+		_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
+		defer userToken.Delete()
+
+		idList := []uuid.UUID{userID.UUID()}
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: &idList,
+		})
+		assert.Nil(t, err)
+	})
+	t.Run("delete-network-owner", func(t *testing.T) {
+		username := "test-delete-network-owner-username"
+		network := "test-delete-network-owner.org"
+		otherUser, err := addTestUser(namespace, username+"-other", false, false, false, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, otherUser) {
+			return
+		}
+		defer db.DeleteUser(nil, namespace, otherUser.ID)
+		user, err := addTestUser(namespace, username, false, true, true, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, user) {
+			return
+		}
+		userID := user.ID
+		defer db.DeleteUser(nil, namespace, userID)
+		_, userToken := dbt.CreateTokenForTest(namespace, userID, username, false, nil)
+		defer userToken.Delete()
+
+		idList := []uuid.UUID{otherUser.ID.UUID()}
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: &idList,
+		})
+		assert.Nil(t, err)
+		_, err = db.GetUserFast(namespace, otherUser.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+		// Delete again should pass too.
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: &idList,
+		})
+		assert.Nil(t, err)
+		// Now delete the network owner itself.
+		idList = []uuid.UUID{userID.UUID()}
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: &idList,
+		})
+		assert.Nil(t, err)
+		_, err = db.GetUserFast(namespace, user.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+
+		// Re-add to delete in one shot.
+		otherUser, err = addTestUser(namespace, username+"-other", false, false, false, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, otherUser) {
+			return
+		}
+		defer db.DeleteUser(nil, namespace, otherUser.ID)
+		user, err = addTestUser(namespace, username, false, true, true, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, user) {
+			return
+		}
+		userID = user.ID
+		defer db.DeleteUser(nil, namespace, userID)
+		_, userToken = dbt.CreateTokenForTest(namespace, userID, username, false, nil)
+		defer userToken.Delete()
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: nil,
+		})
+		assert.Nil(t, err)
+		_, err = db.GetUserFast(namespace, otherUser.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+		_, err = db.GetUserFast(namespace, otherUser.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+
+		// Re-add to delete in one shot with owner ID part of list.
+		otherUser, err = addTestUser(namespace, username+"-other", false, false, false, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, otherUser) {
+			return
+		}
+		defer db.DeleteUser(nil, namespace, otherUser.ID)
+		user, err = addTestUser(namespace, username, false, true, true, &network)
+		if !assert.Nil(t, err) || !assert.NotNil(t, user) {
+			return
+		}
+		userID = user.ID
+		defer db.DeleteUser(nil, namespace, userID)
+		_, userToken = dbt.CreateTokenForTest(namespace, userID, username, false, nil)
+		defer userToken.Delete()
+		idList = []uuid.UUID{uuid.Nil, userID.UUID()}
+		err = handler.DeleteUsers(userToken, api.DeleteUsersRequestObject{
+			Body: &idList,
+		})
+		assert.Nil(t, err)
+		_, err = db.GetUserFast(namespace, otherUser.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+		_, err = db.GetUserFast(namespace, otherUser.ID, false)
+		assert.ErrorIs(t, err, db.ErrUserNotExists)
+	})
 }
 
 func addUser(namespace, username string) (*types.User, error) {
-	return addTestUser(namespace, username, false)
+	return addTestUser(namespace, username, false, false, false, nil)
 }
 
-func addTestUser(namespace, username string, isAdmin bool) (*types.User, error) {
+func addTestUser(namespace, username string, isAdmin, isNetworkAdmin, isNetworkOwner bool, networkDomain *string) (*types.User, error) {
 	var roles []string
 	if isAdmin {
 		roles = []string{types.NamespaceAdminRole}
+	}
+	if isNetworkAdmin {
+		roles = append(roles, types.NetworkDomainAdminRole)
+	}
+	if isNetworkOwner {
+		roles = append(roles, types.NetworkDomainOwnerRole)
 	}
 	return db.AddUser(
 		namespace, "", "", "",
@@ -342,11 +450,11 @@ func addTestUser(namespace, username string, isAdmin bool) (*types.User, error) 
 				Credential: utils.NewPassword(),
 			},
 		},
-		roles, nil, nil, nil, nil,
+		roles, nil, nil, networkDomain, nil,
 	)
 }
 func addAdminUser(namespace string) (*types.User, error) {
-	return addTestUser(namespace, namespace+"-admin", true)
+	return addTestUser(namespace, namespace+"-admin", true, false, false, nil)
 }
 
 func assertDeleteUser(t *testing.T, namespace string, userID types.UserID) {

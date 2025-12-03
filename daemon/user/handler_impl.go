@@ -608,7 +608,7 @@ func (h *handlerImpl) SearchUser(auth interface{}, requestObject api.SearchUserR
 }
 
 func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUsersRequestObject) error {
-	token, namespace, userID, logger := h.parseToken(auth, "delete-user", "Delete user request")
+	token, namespace, userID, logger := h.parseToken(auth, "delete-users", "Delete users request")
 	ofNamespace := requestObject.Params.Namespace
 	if ofNamespace != "" {
 		if ofNamespace != namespace && !token.IsSysAdmin {
@@ -634,13 +634,18 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 	}
 	isNetworkOwner := requestor.IsNetworkOwner()
 	ofNetwork := optional.String(requestor.NetworkDomain)
+	logger.WithFields(logrus.Fields{
+		"is-network-owner":   isNetworkOwner,
+		"network-domain":     ofNetwork,
+		"user-ids-to-delete": len(idList),
+	}).Infoln("Deleting users")
 	if isNetworkOwner {
 		userIDsOfNetwork, err := db.GetUserIDList(tx, ofNamespace, &ofNetwork)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get network owner ID.")
 			return common.ErrInternalErr
 		}
-		if len(idList) == 1 && idList[0] == userID {
+		if len(idList) <= 0 || slices.Contains(idList, userID) {
 			logger.Infoln("Network owner deleting self, will delete all users in the network domain.")
 			idList = userIDsOfNetwork
 		}

@@ -714,7 +714,6 @@ func (n *NodeHandler) Profiles(nodes []*hstypes.Node) ([]tailcfg.UserProfile, er
 		profile.ID = tailcfg.UserID(idMap[u.ID])
 		ret = append(ret, *profile)
 	}
-	n.vpnService.logger.Debugf("user profiles=%v", ret)
 	return ret, nil
 }
 
