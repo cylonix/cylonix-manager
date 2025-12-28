@@ -151,10 +151,7 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 	}
 	logger.Debugln("Direct login.")
 
-	namespace := ""
-	if params.Namespace != nil && *params.Namespace != "" {
-		namespace = *params.Namespace
-	}
+	namespace := optional.String(params.Namespace)
 	logger = logger.WithField(ulog.Namespace, namespace)
 	login := &loginCredential{
 		loginID:    params.LoginID,
@@ -317,7 +314,7 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 			if namespace != utils.DefaultNamespace {
 				return nil, common.ErrModelUnauthorized
 			}
-			// Detault namespace will be created once there is a first user to
+			// Default namespace will be created once there is a first user to
 			// be created through oauth or registration.
 		}
 	}
@@ -346,10 +343,11 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 				logger.WithError(err).Errorln("Failed to get user login.")
 				return nil, common.ErrInternalErr
 			}
-			if login.Provider != "" {
-				params.Provider = &login.Provider
+			provider := login.LoginProvider()
+			if provider != "" {
+				params.Provider = &provider
 			} else {
-				logger.WithError(err).WithField("login-type", login.LoginType).Debugln("Direct login.")
+				logger.WithField("login-type", login.LoginType).Debugln("Direct login.")
 				return &models.RedirectURLConfig{
 					IsDirectLoginWithPassword: optional.P(true),
 				}, nil
@@ -426,6 +424,7 @@ func (h *handlerImpl) passwordLogin(
 	login, err := db.GetUserLoginByLoginName(namespace, username)
 	if err != nil {
 		if errors.Is(err, db.ErrUserLoginNotExists) {
+			logger.WithError(err).Debugln("Login not exists.")
 			return nil, nil, nil, nil, common.ErrModelUnauthorized
 		}
 		logger.WithError(err).Errorln("Failed to get user login.")

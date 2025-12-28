@@ -12,13 +12,14 @@ import (
 	"cylonix/sase/daemon/common"
 	"cylonix/sase/pkg/logging/logfields"
 	"errors"
+	"fmt"
 
 	"github.com/sirupsen/logrus"
 )
 
 type serviceHandler interface {
 	SendCode(api.SendCodeRequestObject) (bool, *models.OneTimeCodeSendResult, error)
-	Verify(api.VerifyCodeRequestObject) (*models.ApprovalState, error)
+	Verify(api.VerifyCodeRequestObject) (*string, error)
 }
 
 type OTPService struct {
@@ -78,9 +79,11 @@ func (s *OTPService) verify(ctx context.Context, requestObject api.VerifyCodeReq
 	ret, err := s.handler.Verify(requestObject)
 	if err == nil {
 		if ret != nil {
-			return api.VerifyCode200TextResponse(*ret), nil
+			// Wrap in quotes to ensure it's treated as a string
+			quoted := fmt.Sprintf(`"%s"`, *ret)
+			return api.VerifyCode200TextResponse(quoted), nil
 		}
-		return api.VerifyCode200TextResponse(""), nil
+		return api.VerifyCode200TextResponse(`""`), nil
 	}
 	if errors.Is(err, common.ErrInternalErr) {
 		return api.VerifyCode500JSONResponse{}, nil

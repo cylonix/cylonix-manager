@@ -172,11 +172,11 @@ func (h *handlerImpl) addEmailOrPhone(
 	}
 	if !isPhone && ub.Email != nil {
 		// Remove add-email to skip user base info email update.
-		*update.AddEmail = ""
+		update.AddEmail = nil
 	}
 	if isPhone && ub.Mobile != nil {
 		// Remove add-phone to skip user base info phone update.
-		*update.AddPhone = ""
+		update.AddPhone = nil
 	}
 	return nil
 }
@@ -188,9 +188,9 @@ func (h *handlerImpl) delEmailOrPhone(
 	if err := db.DeleteUserLoginCheckUserID(tx, namespace, userID, loginName); err != nil {
 		logger.WithError(err).Warnln("Delete email/phone failed.")
 	}
-	if !isPhone && loginName == optional.String(ub.Email) ||
+	if loginName == optional.String(ub.Email) ||
 		loginName == optional.String(ub.Mobile) {
-		// Find a back up email to set in base info.
+		// Find a back up email or phone to set in base info.
 		newEmailOrPhone, err := db.GetUserEmailOrPhone(namespace, userID, isPhone)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get user email/phone login.")
@@ -198,10 +198,22 @@ func (h *handlerImpl) delEmailOrPhone(
 		}
 		if newEmailOrPhone != nil {
 			if isPhone {
-				*update.AddPhone = *newEmailOrPhone
+				update.AddPhone = newEmailOrPhone
+				update.DelPhone = nil
 			} else {
-				*update.AddEmail = *newEmailOrPhone
+				update.AddEmail = newEmailOrPhone
+				update.DelEmail = nil
 			}
+		} else {
+			logger.Debugln("No backup email/phone found.")
+		}
+		// No backup found, user base info email/phone will be cleared.
+	} else {
+		// Update the del email/phone to skip user base info update.
+		if isPhone {
+			update.DelPhone = nil
+		} else {
+			update.DelEmail = nil
 		}
 	}
 	return nil
@@ -317,8 +329,9 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 		}
 	}
 
-	su, err := db.GetUserFast(namespace, userID, false)
-	if err != nil {
+	var su types.User
+
+	if err := db.GetUser(userID, &su); err != nil {
 		logger.WithError(err).Errorln("Failed to get user from db.")
 		return common.ErrInternalErr
 	}
@@ -331,10 +344,9 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 	}
 	defer tx.Rollback()
 
-	// TODO: move all the updates to be done in db for rollbacks.
-	if update.SetUsername != nil && *update.SetUsername && update.Username != nil && *update.Username != "" {
+	if optional.Bool(update.SetUsername) && optional.String(update.Username) != "" {
 		logger = logger.WithField(ulog.Username, update.Username)
-		if update.Password == nil || *update.Password == "" || update.SetPassword == nil || !*update.SetPassword {
+		if optional.String(update.Password) == "" || !optional.Bool(update.SetPassword) {
 			err = common.NewBadParamsErr(err)
 			logger.WithError(err).Errorln("Update username must also reset password.")
 			return err
@@ -377,10 +389,10 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 				return err
 			}
 		}
-	} else if update.SetPassword != nil && *update.SetPassword {
+	} else if optional.Bool(update.SetPassword) {
 		loginName := ""
 		loginType := models.LoginTypeUsername
-		if update.SetPasswordForEmail != nil && *update.SetPasswordForEmail != "" {
+		if optional.String(update.SetPasswordForEmail) != "" {
 			loginName = *update.SetPasswordForEmail
 			loginType = models.LoginTypeEmail
 		}
@@ -446,6 +458,19 @@ func (h *handlerImpl) UpdateUser(auth interface{}, requestObject api.UpdateUserR
 				WithError(err).
 				Errorln("Failed to del user role.")
 			return common.ErrInternalErr
+		}
+	}
+	if optional.Bool(update.SetDisplayName) && update.DisplayName != nil {
+		// Update the login's display name if there is only one login
+		// And the login is not Oauth logins i.e. display name is not set from
+		// Oauth provider.
+		logins := su.UserLogins
+		if len(logins) == 1 && logins[0].LoginProvider() == "" {
+			login := &logins[0]
+			if err := db.UpdateLoginDisplayName(tx, login, *update.DisplayName); err != nil {
+				logger.WithError(err).Errorln("Failed to update login display name.")
+				return common.ErrInternalErr
+			}
 		}
 	}
 	if err := db.UpdateUser(tx, namespace, userID, update); err != nil {
@@ -627,27 +652,32 @@ func (h *handlerImpl) DeleteUsers(auth interface{}, requestObject api.DeleteUser
 	}
 	defer tx.Rollback()
 
-	requestor, err := db.GetUserFast(ofNamespace, userID, false)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to get user.")
-		return common.ErrInternalErr
-	}
-	isNetworkOwner := requestor.IsNetworkOwner()
-	ofNetwork := optional.String(requestor.NetworkDomain)
-	logger.WithFields(logrus.Fields{
-		"is-network-owner":   isNetworkOwner,
-		"network-domain":     ofNetwork,
-		"user-ids-to-delete": len(idList),
-	}).Infoln("Deleting users")
-	if isNetworkOwner {
-		userIDsOfNetwork, err := db.GetUserIDList(tx, ofNamespace, &ofNetwork)
+	var ofNetwork string
+	var isNetworkOwner bool
+
+	if !token.IsAdminUser {
+		requestor, err := db.GetUserFast(namespace, userID, false)
 		if err != nil {
-			logger.WithError(err).Errorln("Failed to get network owner ID.")
+			logger.WithError(err).Errorln("Failed to get user.")
 			return common.ErrInternalErr
 		}
-		if len(idList) <= 0 || slices.Contains(idList, userID) {
-			logger.Infoln("Network owner deleting self, will delete all users in the network domain.")
-			idList = userIDsOfNetwork
+		isNetworkOwner = requestor.IsNetworkOwner()
+		ofNetwork = optional.String(requestor.NetworkDomain)
+		logger.WithFields(logrus.Fields{
+			"is-network-owner":   isNetworkOwner,
+			"network-domain":     ofNetwork,
+			"user-ids-to-delete": len(idList),
+		}).Infoln("Deleting users")
+		if isNetworkOwner {
+			userIDsOfNetwork, err := db.GetUserIDList(tx, ofNamespace, &ofNetwork)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get network owner ID.")
+				return common.ErrInternalErr
+			}
+			if len(idList) <= 0 || slices.Contains(idList, userID) {
+				logger.Infoln("Network owner deleting self, will delete all users in the network domain.")
+				idList = userIDsOfNetwork
+			}
 		}
 	}
 	var cbList []func() error
@@ -1083,9 +1113,6 @@ func (h *handlerImpl) ResetPassword(requestObject api.ResetPasswordRequestObject
 
 	namespace = strings.TrimSpace(namespace)
 	loginName = strings.TrimSpace(loginName)
-	if namespace == "" {
-		namespace = utils.DefaultNamespace
-	}
 
 	logger := h.logger.WithFields(logrus.Fields{
 		ulog.Handle:    "reset-password",
@@ -1102,12 +1129,22 @@ func (h *handlerImpl) ResetPassword(requestObject api.ResetPasswordRequestObject
 		return common.ErrModelOneTimeCodeInvalid
 	}
 
-	user, err := db.GetUserByLoginName(namespace, loginName)
+	login, err := db.GetUserLoginByLoginName(namespace, loginName)
 	if err != nil {
-		if errors.Is(err, db.ErrUserNotExists) || errors.Is(err, db.ErrUserLoginNotExists) {
-			logger.Errorln("User or login does not exist.")
-			return common.NewBadParamsErr(err) // Don't be specific.
+		if errors.Is(err, db.ErrUserLoginNotExists) {
+			logger.Errorln("Login does not exist.")
+			return common.NewBadParamsErr(errors.New("email invalid"))
 		}
+		logger.WithError(err).Errorln("Failed to get user login from DB.")
+		return common.ErrInternalErr
+	}
+	if login.Namespace != namespace && namespace != "" {
+		logger.Warnln("Login namespace does not match request namespace.")
+		return common.NewBadParamsErr(errors.New("namespace does not match login"))
+	}
+	namespace = login.Namespace // Use the login's namespace.
+	user := types.User{}
+	if err = db.GetUser(login.UserID, &user); err != nil {
 		logger.WithError(err).Errorln("Failed to get user from DB.")
 		return common.ErrInternalErr
 	}

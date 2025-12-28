@@ -115,7 +115,7 @@ func TestLoginDB(t *testing.T) {
 	_, err = GetUserLoginCacheOnly(namespace, login.ID)
 	assert.Nil(t, err)
 
-	err = DeleteUserLogin(nil, namespace, userID, login.ID)
+	err = DeleteUserLogin(nil, namespace, userID, fastResult)
 	assert.Nil(t, err)
 	_, err = GetUserLogin(namespace, login.ID)
 	if assert.NotNil(t, err) {

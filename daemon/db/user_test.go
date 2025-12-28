@@ -144,7 +144,7 @@ func TestUserDB(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 3, len(userLogins))
 
-	err = DeleteUserLogin(nil, namespace, userID, userLogin2.ID)
+	err = DeleteUserLogin(nil, namespace, userID, userLogin2)
 	assert.Nil(t, err)
 	userLogins, err = GetUserLoginByUserIDFast(namespace, userID)
 	if assert.Nil(t, err) {

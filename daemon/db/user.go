@@ -790,13 +790,25 @@ func UpdateUser(tx *gorm.DB, namespace string, userID types.UserID, update *mode
 		updateUser = true
 		userUpdate["auto_approve_device"] = update.AutoApproveDevice
 	}
+	if update.DelEmail != nil {
+		updateUserBaseInfo = true
+		ubUpdate["email"] = optional.P("")
+	}
 	if update.AddEmail != nil {
 		updateUserBaseInfo = true
-		ubUpdate["email"] = *update.AddEmail
+		ubUpdate["email"] = update.AddEmail
+	}
+	if update.DelPhone != nil {
+		updateUserBaseInfo = true
+		ubUpdate["mobile"] = optional.P("")
 	}
 	if update.AddPhone != nil {
 		updateUserBaseInfo = true
 		ubUpdate["mobile"] = update.AddPhone
+	}
+	if update.DisplayName != nil && optional.Bool(update.SetDisplayName) {
+		updateUserBaseInfo = true
+		ubUpdate["display_name"] = *update.DisplayName
 	}
 	if updateUser {
 		model := &types.User{Model: types.Model{ID: userID}, Namespace: namespace}
@@ -937,7 +949,7 @@ func GetUserBaseInfo(namespace string, userID types.UserID, result interface{}) 
 	return nil
 }
 
-// Only allow to update mobile, email, displayname and profile picture url.
+// Only allow to update mobile, email, display name and profile picture url.
 func UpdateUserBaseInfo(namespace string, userID types.UserID, userBaseInfo *types.UserBaseInfo) error {
 	userInfo := &types.UserBaseInfo{
 		Email:         userBaseInfo.Email,

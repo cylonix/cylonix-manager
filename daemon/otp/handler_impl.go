@@ -8,6 +8,7 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/daemon/common"
 	"cylonix/sase/daemon/db"
+	"cylonix/sase/pkg/optional"
 	"cylonix/sase/pkg/sendmail"
 	"errors"
 
@@ -79,7 +80,7 @@ func (h *handlerImpl) SendCode(params api.SendCodeRequestObject) (sent bool, res
 	return
 }
 
-func (h *handlerImpl) Verify(params api.VerifyCodeRequestObject) (*models.ApprovalState, error) {
+func (h *handlerImpl) Verify(params api.VerifyCodeRequestObject) (*string, error) {
 	phone := params.Params.PhoneNum
 	email := params.Params.Email
 	code := params.Params.Code
@@ -115,7 +116,7 @@ func (h *handlerImpl) Verify(params api.VerifyCodeRequestObject) (*models.Approv
 	common.LogWithLongDashes("Verify code", logger)
 
 	// Code is valid. Fetch the registration status if requested.
-	if params.Params.WantRegistrationState != nil && *params.Params.WantRegistrationState {
+	if optional.Bool(params.Params.WantRegistrationState) {
 		namespace := utils.DefaultNamespace
 		if params.Params.Namespace != nil && *params.Params.Namespace != "" {
 			namespace = *params.Params.Namespace
@@ -125,7 +126,17 @@ func (h *handlerImpl) Verify(params api.VerifyCodeRequestObject) (*models.Approv
 			logger.WithError(err).Errorln("Failed to get registration state.")
 			return nil, common.ErrInternalErr
 		}
-		return state, nil
+		return optional.P(string(*state)), nil
+	}
+
+	// Generate new code if requested.
+	if optional.Bool(params.Params.WantNewCode) {
+		newCode, err := token.SetNewCode()
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to set new code.")
+			return nil, common.ErrInternalErr
+		}
+		return newCode, nil
 	}
 	return nil, nil
 }

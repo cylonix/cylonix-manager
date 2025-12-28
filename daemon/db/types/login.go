@@ -53,6 +53,23 @@ func (t LoginType) ToModel() models.LoginType {
 	}
 	return models.LoginTypeUnknown
 }
+func (t LoginType) Provider() string {
+	switch t {
+	case LoginTypeApple:
+		return "apple"
+	case LoginTypeGithub:
+		return "github"
+	case LoginTypeMicrosoft:
+		return "microsoft"
+	case LoginTypeGoogle:
+		return "google"
+	case LoginTypeKeyCloak:
+		return "keycloak"
+	case LoginTypeWeChat:
+		return "wechat"
+	}
+	return ""
+}
 
 var (
 	LoginTypeAccessKey = LoginType(models.LoginTypeAccessKey)
@@ -139,6 +156,13 @@ func (l *UserLogin) DebugString() string {
 	return fmt.Sprintf("namespace=%v id=%v login_type=%v login_name=%v display_name=%v profile_pic_url=%v provider=%v",
 		l.Namespace, l.ID, l.LoginType, l.LoginName, l.DisplayName,
 		l.ProfilePicURL, l.Provider)
+}
+
+func (l *UserLogin) LoginProvider() string {
+	if l.Provider != "" {
+		return l.Provider
+	}
+	return l.LoginType.Provider()
 }
 
 func NormalizeLoginName(loginName string) string {

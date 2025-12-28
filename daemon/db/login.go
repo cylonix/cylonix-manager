@@ -24,7 +24,6 @@ var (
 	ErrInvalidPasswordHistory  = errors.New("invalid password history")
 	ErrSamePassword            = errors.New("password is the same")
 	ErrSamePhone               = errors.New("phone is the same")
-	ErrWechatAuthInfoNotExists = errors.New("wechat auth info does not exists")
 )
 
 // UpdateLoginUsernamePassword updates the login username and/or password.
@@ -127,6 +126,41 @@ func UpdateLoginPhone(l *types.UserLogin, phone string) error {
 		return err
 	}
 	if err = tx.Commit().Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+
+// UpdateLoginDisplayName updates the login display name.
+func UpdateLoginDisplayName(tx *gorm.DB, l *types.UserLogin, displayName string) error {
+	var toCommit bool
+	if tx == nil {
+		var err error
+		tx, err = getPGconn()
+		if err != nil {
+			return err
+		}
+		toCommit = true
+		tx = tx.Begin()
+		defer tx.Rollback()
+	}
+	displayName = strings.TrimSpace(displayName)
+	namespace := l.Namespace
+	update := map[string]interface{}{
+		"display_name": displayName,
+	}
+	login := types.UserLogin{Model: types.Model{ID: l.ID}, Namespace: namespace}
+	if err := tx.Model(&types.UserLogin{}).Where(&login).Updates(update).Error; err != nil {
+		return err
+	}
+	if err := cleanLoginCache(l); err != nil {
+		return err
+	}
+	if !toCommit {
+		return nil
+	}
+	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 	return nil
@@ -388,15 +422,10 @@ func cleanLoginCache(login *types.UserLogin) error {
 	return nil
 }
 
-func DeleteUserLogin(tx *gorm.DB, namespace string, userID types.UserID, loginID types.LoginID) error {
-	login, err := GetUserLoginFast(namespace, loginID)
-	if err != nil {
-		if errors.Is(err, ErrUserLoginNotExists) {
-			return nil
-		}
-		return err
-	}
+func DeleteUserLogin(tx *gorm.DB, namespace string, userID types.UserID, login *types.UserLogin) error {
 	var commit bool
+	var err error
+	loginID := login.ID
 	if tx == nil {
 		tx, err = getPGconn()
 		if err != nil {
@@ -457,7 +486,7 @@ func DeleteUserLoginCheckUserID(tx *gorm.DB, namespace string, userID types.User
 	if loginInfo.UserID != userID {
 		return ErrUserLoginUsedByOtherUser
 	}
-	return DeleteUserLogin(tx, namespace, userID, types.LoginID(loginInfo.ID))
+	return DeleteUserLogin(tx, namespace, userID, loginInfo)
 }
 
 // GetUserEmailOrPhone does not return error if there is no email/phone
