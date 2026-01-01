@@ -58,8 +58,13 @@ func (w *wgHandlerImpl) List(auth interface{}, requestObject api.ListVpnDeviceRe
 	params := requestObject.Params
 	list, num, err := db.GetWgInfoList(
 		ofNamespace, ofUserID, params.Contain,
+		params.FilterBy, params.FilterValue,
 		params.IsWireguardOnly, params.Page, params.PageSize,
+		params.SortBy, params.SortDesc,
 	)
+	logger = logger.
+		WithField("namespace", optional.String((ofNamespace))).
+		WithField("user-id", optional.V(ofUserID, types.NilID))
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to list wg devices from db.")
 		return nil, err
@@ -69,19 +74,11 @@ func (w *wgHandlerImpl) List(auth interface{}, requestObject api.ListVpnDeviceRe
 	})
 	online := int64(0)
 	for _, w := range wgDevices {
-		if w.Name == "" {
-			logger.Warnln("Invalid wg device name.")
-			continue
-		}
-		log := logger.WithField("name", w.Name)
-		if err := common.SetWgDeviceStats(&w); err != nil {
-			log.Warnln("Can't set wg device stats.")
-			continue
-		}
-		if common.IsLastSeenOnline(optional.Int64(w.LastSeen)) {
+		if common.IsLastSeenOnline(optional.Int64(w.LastSeen)) || w.LastSeen == nil {
 			online += 1
 		}
 	}
+	logger.WithField("total", num).WithField("online", online).Debugln("Listed wg devices.")
 	return &models.WgDeviceList{
 		Devices: wgDevices,
 		Online:  int(online),

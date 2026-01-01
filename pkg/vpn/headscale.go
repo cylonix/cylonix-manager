@@ -350,50 +350,6 @@ func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, 
 	return node, nil
 }
 
-func ListNodes(
-	namespace string, network *string, userID *types.UserID, nodeIDList []uint64,
-	filterBy, filterValue, sortBy *string, sortDesc *bool, page, pageSize *uint32,
-) (uint32, []*hstypes.Node, error) {
-	if headscale == nil {
-		if ignoreHeadscaleInitError {
-			return 0, nil, nil
-		}
-		return 0, nil, ErrHeadscaleNotInitialized
-	}
-	var user string
-	if userID != nil {
-		user = userID.String()
-	}
-	request := &v1.ListNodesRequest{
-		Namespace:   &namespace,
-		Network:     network,
-		NodeIdList:  nodeIDList,
-		User:        user,
-		FilterBy:    filterBy,
-		FilterValue: filterValue,
-		SortBy:      sortBy,
-		SortDesc:    sortDesc,
-		Page:        page,
-		PageSize:    pageSize,
-	}
-	client := getHsClient()
-	ctx, cancel := newHsClientContext()
-	defer cancel()
-	response, err := client.ListNodes(ctx, request)
-	if err != nil {
-		return 0, nil, err
-	}
-	var list []*hstypes.Node
-	for _, p := range response.Nodes {
-		n, err := hstypes.ParseProtoNode(p, false)
-		if err != nil {
-			return 0, nil, err
-		}
-		list = append(list, n)
-	}
-	return response.Total, list, nil
-}
-
 func CreateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*uint64, error) {
 	if headscale == nil {
 		if ignoreHeadscaleInitError {

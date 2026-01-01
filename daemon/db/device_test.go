@@ -190,7 +190,7 @@ func TestDeviceDB(t *testing.T) {
 				assert.Equal(t, ip, wgInfo.Addresses[0].String())
 			}
 		}
-		wgInfoList, total, err := GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
+		wgInfoList, total, err := GetWgInfoList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		if assert.Nil(t, err) {
 			assert.Equal(t, len(wgInfoList), 1)
 			assert.Equal(t, len(wgInfoList), int(total))
@@ -221,7 +221,7 @@ func TestDeviceDB(t *testing.T) {
 
 		err = DeleteWgInfo(namespace, idList[1])
 		assert.Nil(t, err)
-		wgInfoList, total, err = GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
+		wgInfoList, total, err = GetWgInfoList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		if assert.Nil(t, err) {
 			assert.Equal(t, len(wgInfoList), 0)
 			assert.Equal(t, len(wgInfoList), int(total))

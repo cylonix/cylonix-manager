@@ -1175,3 +1175,69 @@ func DelUserRole(tx *gorm.DB, namespace string, userID types.UserID, role string
 	roles := slices.Delete(user.Roles, slices.Index(user.Roles, role), slices.Index(user.Roles, role)+1)
 	return tx.Update("roles", roles).Error
 }
+
+func NetworkDomainCountWithMultipleUsers(namespace *string) (int64, error) {
+	db, err := postgres.Connect()
+	if err != nil || db == nil {
+		return 0, fmt.Errorf("failed to connect to db: %w", err)
+	}
+	subQuery := db.Model(&types.User{}).
+		Select("network_domain").
+		Where("network_domain IS NOT NULL AND network_domain != ''").
+		Group("network_domain").
+		Having("count(id) > 1")
+	if namespace != nil {
+		ns := types.NormalizeNamespace(*namespace)
+		subQuery = subQuery.Where("namespace = ?", ns)
+	}
+	var ret int64
+	err = db.Table("(?) as subquery", subQuery).Count(&ret).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to count: %w", err)
+	}
+	return ret, nil
+}
+
+func ListUsersSharingNetworkDomain(namespace *string) (int64, []*types.User, error) {
+	db, err := postgres.Connect()
+	if err != nil || db == nil {
+		return 0, nil, fmt.Errorf("failed to connect to db: %w", err)
+	}
+
+	// Subquery to get network domains with multiple users
+	subQuery := db.Model(&types.User{}).
+		Select("network_domain").
+		Where("network_domain IS NOT NULL AND network_domain != ''").
+		Group("network_domain").
+		Having("count(id) > 1")
+	if namespace != nil {
+		ns := types.NormalizeNamespace(*namespace)
+		subQuery = subQuery.Where("namespace = ?", ns)
+	}
+
+	var count int64
+	err = db.Table("(?) as subquery", subQuery).Count(&count).Error
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to count: %w", err)
+	}
+
+	// Get all users whose network_domain is in the subquery
+	var users []*types.User
+	query := db.Model(&types.User{}).
+		Where("network_domain IN (?)", subQuery)
+
+    if namespace != nil {
+        ns := types.NormalizeNamespace(*namespace)
+        query = query.Where("namespace = ?", ns)
+    }
+
+    err = query.
+		Preload("UserBaseInfo").
+		Preload("UserLogins").
+		Preload("UserTier").
+		Find(&users).Error
+    if err != nil {
+        return 0, nil, fmt.Errorf("failed to list users: %w", err)
+    }
+    return count, users, nil
+}

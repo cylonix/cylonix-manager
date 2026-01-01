@@ -505,7 +505,8 @@ func GetWgInfoListByWgName(namespace, wgName string) ([]*types.WgInfo, error) {
 }
 func GetWgInfoList(
 	namespace *string, userID *types.UserID, contain *string,
-	isWireguardOnly *bool, page, pageSize *int,
+	filterBy, filterValue *string,
+	isWireguardOnly *bool, page, pageSize *int, sortBy, sortDesc *string,
 ) ([]*types.WgInfo, int64, error) {
 	pg, err := postgres.Connect()
 	if err != nil {
@@ -530,6 +531,8 @@ func GetWgInfoList(
 		return nil, 0, ErrInternalErr
 	}
 	ret := []*types.WgInfo{}
+	pg = filter(pg, filterBy, filterValue)
+	pg = postgres.Sort(pg, sortBy, sortDesc)
 	pg = postgres.Page(pg, total, page, pageSize)
 	if err = pg.Find(&ret).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

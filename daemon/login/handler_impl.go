@@ -443,7 +443,8 @@ func (h *handlerImpl) passwordLogin(
 		}
 	}
 	if optional.Bool(user.IsAdminUser) || optional.Bool(user.IsSysAdmin) {
-		if params.MfaOneTimeCode == nil || *params.MfaOneTimeCode == "" {
+		code := optional.String(params.MfaOneTimeCode)
+		if code == "" {
 			logger.Debugln("MFA code required.")
 			return nil, nil, nil, &models.AdditionalAuthInfo{
 				AuthOptions: []models.MfaType{
@@ -452,6 +453,19 @@ func (h *handlerImpl) passwordLogin(
 				Message: "MFA code required",
 			}, nil
 		}
+		valid, err := common.CheckOneTimeCodeWithEmailOrPhoneP(
+			optional.StringP(username), nil, // Only email code for now
+			&code,
+		)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to check MFA code.")
+			return nil, nil, nil, nil, common.ErrInternalErr
+		}
+		if !valid {
+			logger.Debugln("Invalid MFA code.")
+			return nil, nil, nil, nil, common.NewBadParamsErr(errors.New("invalid MFA code"))
+		}
+		// MFA passed. Proceed to login after valid password.
 	}
 	if namespace == "" {
 		namespace = login.Namespace

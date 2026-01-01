@@ -46,6 +46,7 @@ type serviceHandler interface {
 	UserSummary(auth interface{}, requestObject api.GetUserSummaryRequestObject) (models.SummaryStatsList, error)
 	UserDeviceSummary(auth interface{}, requestObject api.GetUserDeviceSummaryRequestObject) ([]models.DeviceSummary, error)
 	UserDeviceTraffic(auth interface{}, requestObject api.GetDeviceTrafficRequestObject) ([]models.DeviceTrafficStats, error)
+	MultiUserNetworkSummary(auth interface{}, requestObject api.GetUserMultiUserNetworkSummaryRequestObject) (int, *[]models.User, error)
 
 	// Profile images.
 	ProfileImg(auth interface{}, requestObject api.GetProfileImgRequestObject) (*models.UserProfile, error)
@@ -115,6 +116,7 @@ func (s *UserService) Register(d *api.StrictServer) error {
 	d.GetUserSummaryHandler = s.userSummary
 	d.GetUserDeviceSummaryHandler = s.userDeviceSummary
 	d.GetDeviceTrafficHandler = s.userDeviceTraffic
+	d.GetUserMultiUserNetworkSummaryHandler = s.multiUserNetworkSummary
 
 	// Profile images.
 	d.GetProfileImgHandler = s.userProfileImg
@@ -441,6 +443,26 @@ func (s *UserService) userSummary(ctx context.Context, requestObject api.GetUser
 		return api.GetUserSummary401Response{}, nil
 	}
 	return api.GetUserSummary400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
+func (s *UserService) multiUserNetworkSummary(ctx context.Context, requestObject api.GetUserMultiUserNetworkSummaryRequestObject) (api.GetUserMultiUserNetworkSummaryResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	count, list, err := s.handler.MultiUserNetworkSummary(auth, requestObject)
+	if err == nil {
+		return api.GetUserMultiUserNetworkSummary200JSONResponse{
+			TotalMultiUserNetworks: &count,
+			Users:                  list,
+		}, nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.GetUserMultiUserNetworkSummary500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.GetUserMultiUserNetworkSummary401Response{}, nil
+	}
+	return api.GetUserMultiUserNetworkSummary400JSONResponse{
 		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
 	}, nil
 }

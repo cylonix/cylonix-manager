@@ -660,7 +660,10 @@ func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID
 		}
 	}
 	if wgInfo.Namespace != namespace || wgInfo.UserID != userID {
-		return nil, nil, nil, fmt.Errorf("node namespace/userID mismatch")
+		return nil, nil, nil, fmt.Errorf(
+			"node namespace/userID mismatch: %v/%v vs %v/%v",
+			wgInfo.Namespace, wgInfo.UserID, namespace, userID,
+		)
 	}
 	list, onlineNodes, err := n.vpnService.Peers(wgInfo)
 	if err != nil {

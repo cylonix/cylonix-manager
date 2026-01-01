@@ -557,7 +557,7 @@ func (c *WgClient) sendUsers(namespace string, logger *logrus.Entry) {
 	// TODO: remove the following once we support routed wg networks.
 	// This is to program all the peers in the wg-gateways so that app
 	// does not need to update their wg of choice for now.
-	allWgInfos, _, err := db.GetWgInfoList(&namespace, nil, nil, nil, nil, nil)
+	allWgInfos, _, err := db.GetWgInfoList(&namespace, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get all wg infos from db.")
 		return

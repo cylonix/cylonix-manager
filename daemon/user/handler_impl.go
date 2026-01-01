@@ -1500,6 +1500,25 @@ func (h *handlerImpl) UserSummary(auth interface{}, requestObject api.GetUserSum
 	return
 }
 
+// TODO: add paging support if needed.
+func (h *handlerImpl) MultiUserNetworkSummary(auth interface{}, requestObject api.GetUserMultiUserNetworkSummaryRequestObject) (int, *[]models.User, error) {
+	token, _, _, logger := h.parseToken(auth, "user-summary", "Get user summary")
+	if token == nil || !token.IsSysAdmin {
+		logger.Warnln("Non-sysadmin user trying to access multi-user network summary.")
+		return 0, nil, common.ErrModelUnauthorized
+	}
+	params := requestObject.Params
+	count, users, err := db.ListUsersSharingNetworkDomain(params.Namespace)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get users sharing network domain.")
+		return 0, nil, common.ErrInternalErr
+	}
+	mUsers, err := types.SliceMap(users, func(u *types.User) (models.User, error) {
+		return *u.ToModel(), nil
+	})
+	return int(count), &mUsers, err
+}
+
 func (h *handlerImpl) UserDeviceSummary(auth interface{}, requestObject api.GetUserDeviceSummaryRequestObject) (list []models.DeviceSummary, err error) {
 	token, namespace, userID, logger := h.parseToken(auth, "user-device-summary", "Get user device summary")
 	params := requestObject.Params
