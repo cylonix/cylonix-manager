@@ -524,6 +524,36 @@ func UpdateUserPeers(namespace string, userID types.UserID) error {
 	return err
 }
 
+func AddDelShareToUser(nodeID uint64, namespace, username string, add bool) error {
+	if headscale == nil {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
+		return ErrHeadscaleNotInitialized
+	}
+	var addUser *string
+	var delUser *string
+	if add {
+		addUser = &username
+	} else {
+		delUser = &username
+	}
+	request := &v1.UpdateNodeShareToUserRequest{
+		NodeId:                 nodeID,
+		Namespace:              namespace,
+		AddAcceptedShareToUser: addUser,
+		DelAcceptedShareToUser: delUser,
+	}
+	client := getHsClient()
+	ctx, cancel := newHsClientContext()
+	defer cancel()
+	_, err := client.UpdateNodeShareToUser(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to update share to user from headscale: %w", err)
+	}
+	return nil
+}
+
 func SetIgnoreHeadscaleInitError(ignore bool) {
 	ignoreHeadscaleInitError = ignore
 }

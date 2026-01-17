@@ -132,10 +132,10 @@ func getUser(
 
 // getNetworkDomainForNewUser returns the network domain for a new user.
 // For custom domain for the provider e.g. google workplace user, Tailscale
-// lumps all users of the custom doamin into the same network domain without
+// lumps all users of the custom domain into the same network domain without
 // verifying if indeed they are the owners or exclusive users of the domain. We
 // opt to not do that. Users who want to add other users of the same custom
-// doamin to the same network domain should do so via invitations.
+// domain to the same network domain should do so via invitations.
 func getNetworkDomainForNewUser(login *types.UserLogin, log *logrus.Entry) (*string, error) {
 	if login.Provider == "" {
 		return nil, fmt.Errorf("only oauth login can be used to create new user automatically")

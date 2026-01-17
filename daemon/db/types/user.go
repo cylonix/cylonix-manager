@@ -74,9 +74,9 @@ type UserBaseInfo struct {
 	LoginType     LoginType // Derive most appropriately from a login of the user.
 	DisplayName   string    `json:"display_name"`
 	CompanyName   string    `json:"company_name"`
-	Namespace     string    `gorm:"unqiueIndex:user_namespace_phone;uniqueIndex:user_namespace_email" json:"namespace"`
+	Namespace     string    `gorm:"uniqueIndex:user_namespace_phone;uniqueIndex:user_namespace_email" json:"namespace"`
 	ProfilePicURL string    `json:"profile_pic_url"`
-	Mobile        *string   `gorm:"unqiueIndex:user_namespace_phone" json:"mobile"`
+	Mobile        *string   `gorm:"uniqueIndex:user_namespace_phone" json:"mobile"`
 	Email         *string   `gorm:"uniqueIndex:user_namespace_email" json:"email"`
 }
 
@@ -401,6 +401,8 @@ type UserInvite struct {
 	Code          string       `gorm:"uniqueIndex"`
 	InvitedByID   UserID       `gorm:"type:uuid"`
 	InvitedBy     UserBaseInfo
+	ShareNode     *int64 // Share node instead of inviting into the network.
+	ShareNodeName *string // Name of the VPN node to share with the invited user.
 	Emails        string
 	Role          string
 }
@@ -420,6 +422,8 @@ func (ui *UserInvite) ToModel() *models.UserInvite {
 		InvitedBy:     *ui.InvitedBy.ShortInfo(),
 		Emails:        emails,
 		Role:          ui.Role,
+		ShareNode:     ui.ShareNode,
+		ShareNodeName: ui.ShareNodeName,
 		CreatedAt:     ui.CreatedAt.Unix(),
 	}
 }
@@ -437,5 +441,7 @@ func (ui *UserInvite) FromModel(m *models.UserInvite) *UserInvite {
 		Role:          m.Role,
 		InvitedByID:   UUIDToID(m.InvitedBy.UserID),
 		Emails:        strings.Join(emails, ","),
+		ShareNode:     m.ShareNode,
+		ShareNodeName: m.ShareNodeName,
 	}
 }

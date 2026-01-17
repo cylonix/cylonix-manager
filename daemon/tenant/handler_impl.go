@@ -566,6 +566,10 @@ func (h *handlerImpl) DeleteApprovals(auth interface{}, requestObject api.Delete
 	return nil
 }
 func sendWelcomeEmail(namespace, email, password string) error {
+	if !sendmail.Provisioned() {
+		// Ignore sending welcome email if sendmail is not provisioned
+		return nil
+	}
 	welcome := "Welcome to cylonix. Your company sign up has been approved."
 	id := fmt.Sprintf("Your enterprise ID is %v.", namespace)
 	login := fmt.Sprintf("Login username is your email %v and initial password is %v</p>.", email, password)

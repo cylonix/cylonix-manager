@@ -507,19 +507,21 @@ func addUser(
 	if networkDomain == nil || *networkDomain == "" {
 		if tenant.NetworkDomain != "" {
 			networkDomain = &tenant.NetworkDomain
-		} else {
+		} else if !optional.Bool(isSysAdmin) {
 			return nil, fmt.Errorf("%w: network domain not specified", ErrBadParams)
 		}
 	}
 
 	// Check user limit by the network domain.
-	n, err := UserCount(&namespace, networkDomain, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to count users for network domain %s: %w", *networkDomain, err)
-	}
-	if n >= int64(userTier.MaxUserCount) {
-		return nil, fmt.Errorf("%w: max user limit reached for network domain %s (%v)",
-			ErrMaxUserLimitReached, *networkDomain, userTier.MaxUserCount)
+	if !optional.Bool(isSysAdmin) {
+		n, err := UserCount(&namespace, networkDomain, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count users for network domain %s: %w", *networkDomain, err)
+		}
+		if n >= int64(userTier.MaxUserCount) {
+			return nil, fmt.Errorf("%w: max user limit reached for network domain %s (%v)",
+				ErrMaxUserLimitReached, *networkDomain, userTier.MaxUserCount)
+		}
 	}
 
 	logins := types.UserLoginSlice(loginSlice)
@@ -1120,7 +1122,7 @@ func AddUserRole(tx *gorm.DB, namespace string, userID types.UserID, role string
 		}
 	}
 	tx = tx.Model(&types.User{}).
-			Where("namespace = ? and id = ?", namespace, userID)
+		Where("namespace = ? and id = ?", namespace, userID)
 	switch role {
 	case string(models.PredefinedRolesNamespaceAdmin):
 		if user.IsAdminUser != nil && *user.IsAdminUser {
@@ -1160,7 +1162,7 @@ func DelUserRole(tx *gorm.DB, namespace string, userID types.UserID, role string
 		}
 	}
 	tx = tx.Model(&types.User{}).
-			Where("namespace = ? and id = ?", namespace, userID)
+		Where("namespace = ? and id = ?", namespace, userID)
 	switch role {
 	case string(models.PredefinedRolesNamespaceAdmin):
 		return tx.Update("is_admin_user", optional.P(false)).Error
@@ -1226,18 +1228,18 @@ func ListUsersSharingNetworkDomain(namespace *string) (int64, []*types.User, err
 	query := db.Model(&types.User{}).
 		Where("network_domain IN (?)", subQuery)
 
-    if namespace != nil {
-        ns := types.NormalizeNamespace(*namespace)
-        query = query.Where("namespace = ?", ns)
-    }
+	if namespace != nil {
+		ns := types.NormalizeNamespace(*namespace)
+		query = query.Where("namespace = ?", ns)
+	}
 
-    err = query.
+	err = query.
 		Preload("UserBaseInfo").
 		Preload("UserLogins").
 		Preload("UserTier").
 		Find(&users).Error
-    if err != nil {
-        return 0, nil, fmt.Errorf("failed to list users: %w", err)
-    }
-    return count, users, nil
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	return count, users, nil
 }

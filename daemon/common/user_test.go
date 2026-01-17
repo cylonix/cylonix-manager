@@ -4,6 +4,7 @@
 package common
 
 import (
+	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	tu "cylonix/sase/pkg/test/user"
 	"testing"
@@ -49,5 +50,17 @@ func TestCheckUserOneTimeCode(t *testing.T) {
 		if assert.Nil(t, err) {
 			assert.NotNil(t, su)
 		}
+	}
+}
+
+func TestNewSysAdminTenant(t *testing.T) {
+	_, err := NewSysadminTenant(utils.DefaultNamespace, "test", "")
+	assert.NotNil(t, err)
+	namespace := "test-new-sysadmin-namespace"
+	_, err = NewSysadminTenant(namespace, "test", "")
+	assert.Nil(t, err)
+	_, err = NewSysadminTenant(namespace, "test", "")
+	if assert.NotNil(t, err) {
+		assert.ErrorIs(t, err, db.ErrTenantExists)
 	}
 }

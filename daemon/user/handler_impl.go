@@ -518,8 +518,20 @@ func (h *handlerImpl) PostUser(auth interface{}, requestObject api.PostUserReque
 
 	_, err := db.GetTenantConfigByNamespace(namespace)
 	if err != nil {
-		logger.WithError(err).Errorln("Failed to get tenant information.")
-		return common.ErrInternalErr
+		if !errors.Is(err, db.ErrTenantNotExists) {
+			logger.WithError(err).Errorln("Failed to get tenant information.")
+			return common.ErrInternalErr
+		}
+		// Create default tenant if not exists
+		if namespace != utils.DefaultNamespace {
+			return common.NewBadParamsErr(db.ErrTenantNotExists)
+		}
+		// Create default tenant
+		_, err := common.NewDefaultTenant("add user", "created automatically by admin.")
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to create default tenant.")
+			return common.ErrInternalErr
+		}
 	}
 
 	// Must have one login method specified.
@@ -951,8 +963,8 @@ func (h *handlerImpl) IsUsernameAvailable(requestObject api.CheckUsernameRequest
 
 // Change password changes the password of a user of the same namespace by
 // the user itself or an admin user. The password can be auto-generated
-// if the new password is not specified. Change the pasword of a user
-// in a different namespae is not allowed.
+// if the new password is not specified. Change the password of a user
+// in a different namespace is not allowed.
 func (h *handlerImpl) ChangePassword(auth interface{}, requestObject api.ChangePasswordRequestObject) (*string, error) {
 	token, namespace, userID, logger := h.parseToken(auth, "change-password", "Change password")
 	if namespace == utils.SysAdminNamespace {
@@ -1638,7 +1650,11 @@ func (h *handlerImpl) GetUserRoles(auth interface{}, params api.GetUserRolesRequ
 		return list, nil
 	}
 
-	// Get admin namespace from keycloak.
+	// Get admin roles from keycloak if keycloak is provisioned.
+	if !kc.Provisioned {
+		return []models.Role{}, nil
+	}
+
 	getRolesParams := gocloak.GetRoleParams{}
 	if params.Params.Contain != nil && *params.Params.Contain != "" {
 		search := *params.Params.Contain
@@ -2010,14 +2026,24 @@ func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequest
 		logger.Warnln("nil token")
 		return "", common.ErrModelUnauthorized
 	}
+	if token.IsSysAdmin {
+		// Sysadmin cannot invite user to a network.
+		// Instead of telling sysadmin is unauthorized, return an error
+		// indicating this action is not allowed.
+		return "", common.NewBadParamsErr(
+			errors.New(
+				"sysadmin shouldn't invite user to a network or share a node",
+			),
+		)
+	}
 	var user types.User
 	err := db.GetUser(userID, &user)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get user from db.")
 		return "", common.ErrInternalErr
 	}
-	if !(user.IsNetworkAdmin()) {
-		logger.Warnln("Non-admin user trying to invite user.")
+	if !user.IsNetworkAdmin() && !token.IsAdminUser {
+		logger.Warnln("Non-admin user trying to invite user or share node.")
 		return "", common.ErrModelUnauthorized
 	}
 	if namespace == "" {
@@ -2035,6 +2061,8 @@ func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequest
 		Emails:        params.Emails,
 		NetworkDomain: *networkDomain,
 		Code:          code,
+		ShareNode:     params.ShareNode,
+		ShareNodeName: params.ShareNodeName,
 		InvitedBy:     *user.UserBaseInfo.ShortInfo(),
 		Role:          string(params.Role),
 	})
@@ -2049,18 +2077,39 @@ func (h *handlerImpl) InviteUser(auth interface{}, request api.InviteUserRequest
 				emails = append(emails, string(email))
 			}
 		}
-		subject := inviteEmailSubject(user.UserBaseInfo.DisplayName, params.InternalUser)
-		body := inviteEmailBody(
+		if err := sendInvite(
+			emails,
 			user.UserBaseInfo.DisplayName,
+			optional.V(user.UserBaseInfo.Email, *networkDomain),
 			code,
+			params.ShareNodeName,
 			params.InternalUser,
-		)
-		if err := sendmail.SendEmail(emails, subject, body); err != nil {
+		); err != nil {
 			logger.WithError(err).Errorln("Failed to send user invite email.")
 			return "", common.ErrInternalErr
 		}
 	}
 	return inviteLink(code), nil
+}
+
+func sendInvite(
+	emails []string,
+	fromUser, networkDomain, code string, nodeName *string,
+	internalUser bool,
+) error {
+	subject := inviteEmailSubject(
+		fromUser,
+		nodeName,
+		internalUser,
+	)
+	body := inviteEmailBody(
+		fromUser,
+		networkDomain,
+		code,
+		nodeName,
+		internalUser,
+	)
+	return sendmail.SendEmail(emails, subject, body)
 }
 
 func (h *handlerImpl) DeleteUserInvite(auth interface{}, request api.DeleteUserInviteRequestObject) error {
@@ -2101,6 +2150,47 @@ func (h *handlerImpl) DeleteUserInvite(auth interface{}, request api.DeleteUserI
 		return common.NewBadParamsErr(errors.New("empty user invite ID list"))
 	}
 	idList := types.UUIDListToIDList(request.Body)
+	if optional.Bool(request.Params.RevokeSharedNode) {
+		for _, id := range idList {
+			invite, err := db.GetUserInvite(id)
+			if err != nil {
+				if errors.Is(err, db.ErrUserInviteNotExists) {
+					continue
+				}
+				logger.WithError(err).Errorln("Failed to get user invite from db.")
+				return common.ErrInternalErr
+			}
+			if ofNamespace != nil && invite.Namespace != *ofNamespace {
+				logger.
+					WithField("of-namespace", *ofNamespace).
+					WithField(ulog.Namespace, invite.Namespace).
+					Warnln("User invite namespace does not match the requested namespace.")
+				return common.ErrModelUnauthorized
+			}
+			if networkDomain != nil && invite.NetworkDomain != *networkDomain {
+				logger.
+					WithField("of-network-domain", *networkDomain).
+					WithField("invite-network-domain", invite.NetworkDomain).
+					Warnln("User invite network domain does not match the requested network domain.")
+				return common.ErrModelUnauthorized
+			}
+			if invite.ShareNode != nil && *invite.ShareNode > 0 {
+				m := invite.ToModel()
+				nodeID := uint64(*invite.ShareNode)
+				for _, email := range m.Emails {
+					err := vpn.AddDelShareToUser(nodeID, *ofNamespace, string(email), false)
+					if err != nil {
+						logger.WithError(err).Errorln("Failed to remove shared node from user.")
+						return common.ErrInternalErr
+					}
+				}
+				logger.
+					WithField("user", invite.Emails).
+					WithField("node", nodeID).
+					Infoln("Removed shared node from user.")
+			}
+		}
+	}
 	err := db.DeleteUserInvites(ofNamespace, networkDomain, idList)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to delete user invite.")
@@ -2151,7 +2241,7 @@ func (h *handlerImpl) ListUserInvite(auth interface{}, request api.GetUserInvite
 	params := request.Params
 	total, list, err := db.ListUserInvites(
 		ofNamespace, networkDomain, params.FilterBy, params.FilterValue,
-		params.SortBy, params.SortDesc, nil,
+		params.SortBy, params.SortDesc, params.ShareNode, nil,
 		params.Page, params.PageSize,
 	)
 	if err != nil {
@@ -2159,7 +2249,210 @@ func (h *handlerImpl) ListUserInvite(auth interface{}, request api.GetUserInvite
 		return 0, nil, common.ErrInternalErr
 	}
 	mList, _ := types.SliceMap(list, func(v types.UserInvite) (models.UserInvite, error) {
-		return *v.ToModel(), nil
+		m := v.ToModel()
+		m.Link = optional.P(inviteLink(m.Code))
+		return *m, nil
 	})
 	return total, mList, nil
+}
+
+func (h *handlerImpl) GetUserInvite(auth interface{}, request api.GetUserInviteRequestObject) (*models.UserInvite, error) {
+	token, namespace, userID, logger := h.parseToken(auth, "get-user-invite", "Get user invite")
+	if token == nil {
+		logger.Warnln("nil token")
+		return nil, common.ErrModelUnauthorized
+	}
+	invite, err := db.GetUserInviteByCode(request.Params.InviteCode)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user invite from db.")
+		if errors.Is(err, db.ErrUserInviteNotExists) {
+			return nil, common.NewBadParamsErr(errors.New("invalid invite code"))
+		}
+		return nil, common.ErrInternalErr
+	}
+	mInvite := invite.ToModel()
+	mInvite.Link = optional.P(inviteLink(mInvite.Code))
+	if token.IsSysAdmin {
+		return mInvite, nil
+	}
+	if token.IsAdminUser && invite.Namespace == namespace {
+		return mInvite, nil
+	}
+	// Check if the user is network admin of the inviter's network domain.
+	// Or if the user is on the invitee list.
+	var user types.User
+	err = db.GetUser(userID, &user)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user from db.")
+		return nil, common.ErrInternalErr
+	}
+	logger = logger.WithField("user", optional.String(user.UserBaseInfo.Email))
+	if !user.IsNetworkAdmin() {
+		logger.Warnln("Non-admin user trying to get user invite.")
+		return nil, common.ErrModelUnauthorized
+	}
+	networkDomain := optional.String(user.NetworkDomain)
+	if networkDomain == "" {
+		networkDomain = user.TenantConfig.NetworkDomain
+	}
+	if networkDomain == invite.NetworkDomain {
+		if user.IsNetworkAdmin() {
+			return mInvite, nil
+		}
+		return nil, common.ErrModelUnauthorized
+	}
+	if user.UserBaseInfo.Email == nil {
+		return nil, common.ErrModelUnauthorized
+	}
+	userEmail := *user.UserBaseInfo.Email
+	for _, email := range mInvite.Emails {
+		if strings.EqualFold(userEmail, string(email)) {
+			return mInvite, nil
+		}
+	}
+	return nil, common.ErrModelUnauthorized
+}
+
+func (h *handlerImpl) UpdateUserInvite(auth interface{}, request api.UpdateUserInviteRequestObject) error {
+	token, namespace, userID, logger := h.parseToken(auth, "update-user-invite", "Update user invite")
+	if token == nil {
+		logger.Warnln("nil token")
+		return common.ErrModelUnauthorized
+	}
+	logger = logger.WithField("namespace", namespace)
+	invite, err := db.GetUserInviteByCode(request.Params.InviteCode)
+	if err != nil {
+		if errors.Is(err, db.ErrUserInviteNotExists) {
+			return common.NewBadParamsErr(errors.New("invalid invite code"))
+		}
+		logger.WithError(err).Errorln("Failed to get user invite from db.")
+		return common.ErrInternalErr
+	}
+	mInvite := invite.ToModel()
+	userEmail := optional.String(&request.Params.UserEmail)
+	if !token.IsSysAdmin {
+		if invite.Namespace != namespace {
+			logger.
+				WithField("namespace", namespace).
+				WithField("inviteNamespace", invite.Namespace).
+				Warnln("User from different namespace trying to update user invite.")
+			return common.ErrModelUnauthorized
+		}
+		if !token.IsAdminUser {
+			// Check if the user is on the invitee list.
+			// Invited user must also be a network admin.
+			var user types.User
+			err = db.GetUser(userID, &user)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user from db.")
+				return common.ErrInternalErr
+			}
+			logger = logger.WithField("user", optional.String(user.UserBaseInfo.Email))
+			if !user.IsNetworkAdmin() {
+				logger.Warnln("Non-admin user trying to update user invite.")
+				return common.ErrModelUnauthorized
+			}
+			if user.UserBaseInfo.Email == nil {
+				logger.Warnln("User with nil email trying to update user invite.")
+				return common.ErrModelUnauthorized
+			}
+
+			userEmail = *user.UserBaseInfo.Email
+			found := false
+			for _, email := range mInvite.Emails {
+				if strings.EqualFold(userEmail, string(email)) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				logger.
+					WithField("emails", invite.Emails).
+					Warnln("User not on invitee list trying to update user invite.")
+				return common.ErrModelUnauthorized
+			}
+		}
+		if userEmail == "" {
+			return common.NewBadParamsErr(errors.New("invalid user email"))
+		}
+	}
+	logger = logger.WithField("userEmail", userEmail)
+	accepted := request.Params.Status == "accepted"
+	shareNode := optional.V(invite.ShareNode, 0)
+	if accepted && shareNode > 0 {
+		logger = logger.WithField("shareNode", shareNode)
+		err = vpn.AddDelShareToUser(uint64(shareNode), namespace, userEmail, true)
+		if err != nil {
+			logger.WithError(err).Errorln("Failed to accept share to user.")
+			return common.ErrInternalErr
+		}
+		logger.Infoln("Accepted share to user.")
+	}
+	logger.
+		WithField("share-node", shareNode).
+		WithField("accepted", accepted).
+		Debugln("user invite updated.")
+	return nil
+}
+
+func (h *handlerImpl) SendUserInvite(auth interface{}, request api.SendUserInviteRequestObject) error {
+	token, namespace, userID, logger := h.parseToken(auth, "send-user-invite", "Send user invite")
+	if token == nil {
+		logger.Warnln("nil token")
+		return common.ErrModelUnauthorized
+	}
+	logger = logger.WithField("namespace", namespace)
+	id := request.ID
+	invite, err := db.GetUserInvite(types.UUIDToID(id))
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to get user invite from db.")
+		if errors.Is(err, db.ErrUserInviteNotExists) {
+			return common.NewBadParamsErr(errors.New("invalid invite code"))
+		}
+		return common.ErrInternalErr
+	}
+	mInvite := invite.ToModel()
+	if !token.IsSysAdmin {
+		if invite.Namespace != namespace {
+			return common.ErrModelUnauthorized
+		}
+		if !token.IsAdminUser {
+			// Check if the user is a network admin.
+			var user types.User
+			err = db.GetUser(userID, &user)
+			if err != nil {
+				logger.WithError(err).Errorln("Failed to get user from db.")
+				return common.ErrInternalErr
+			}
+			if !user.IsNetworkAdmin() {
+				return common.ErrModelUnauthorized
+			}
+			networkDomain := optional.String(user.NetworkDomain)
+			if networkDomain == "" {
+				networkDomain = user.TenantConfig.NetworkDomain
+			}
+			if networkDomain == "" || networkDomain != invite.NetworkDomain {
+				logger.WithField("networkDomain", networkDomain).
+					WithField("inviteNetworkDomain", invite.NetworkDomain).
+					Debugln("Network domain mismatch")
+				return common.ErrModelUnauthorized
+			}
+		}
+	}
+	var emails []string
+	for _, e := range mInvite.Emails {
+		emails = append(emails, string(e))
+	}
+	if err := sendInvite(
+		emails,
+		invite.InvitedBy.DisplayName,
+		optional.V(invite.InvitedBy.Email, invite.NetworkDomain),
+		invite.Code,
+		invite.ShareNodeName,
+		false,
+	); err != nil {
+		logger.WithError(err).Errorln("Failed to send user invite email.")
+		return common.ErrInternalErr
+	}
+	return nil
 }

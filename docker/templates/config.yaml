@@ -1,3 +1,9 @@
+# Company setup.
+company:
+  name: "$COMPANY_NAME"
+  website: "$COMPANY_WEBSITE"
+  contact_email: "$CONTACT_EMAIL"
+
 # Base URL with schemes. Having https as scheme will enable http only secure
 # cookies.
 base_url: "$BASE_URL"

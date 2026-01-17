@@ -44,7 +44,12 @@ func CreateUserInvite(m *models.UserInvite) error {
 
 func GetUserInvite(id types.ID) (*types.UserInvite, error) {
 	ret := &types.UserInvite{}
-	if err := postgres.SelectFirst(ret, "id = ?", id); err != nil {
+	tx, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Model(ret).Preload("InvitedBy").
+		Where("id = ?", id).First(ret).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserInviteNotExists
 		}
@@ -54,7 +59,12 @@ func GetUserInvite(id types.ID) (*types.UserInvite, error) {
 }
 func GetUserInviteByCode(code string) (*types.UserInvite, error) {
 	ret := &types.UserInvite{}
-	if err := postgres.SelectFirst(ret, "code = ?", code); err != nil {
+	tx, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Model(ret).Preload("InvitedBy").
+		Where("code = ?", code).First(ret).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserInviteNotExists
 		}
@@ -106,7 +116,7 @@ func DeleteUserInvites(namespace, networkDomain *string, idList []types.ID) erro
 // No existing record is not an error.
 func ListUserInvites(
 	namespace, networkDomain, filterBy, filterValue, sortBy, sortDesc *string,
-	idList []types.ID, page, pageSize *int,
+	shareNode *int64, idList []types.ID, page, pageSize *int,
 ) (int, []types.UserInvite, error) {
 	db, err := postgres.Connect()
 	if err != nil {
@@ -125,6 +135,9 @@ func ListUserInvites(
 		} else {
 			db = db.Where("id in ?", idList)
 		}
+	}
+	if shareNode != nil {
+		db = db.Where("share_node = ?", *shareNode)
 	}
 	db = filter(db, filterBy, filterValue)
 	db = db.Preload("InvitedBy")

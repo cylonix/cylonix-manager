@@ -5,6 +5,7 @@ package sendmail
 
 import (
 	"cylonix/sase/pkg/logging/logfields"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,9 @@ const (
 	sendCodeSubject = "Your temporary code"
 	idleTime        = time.Minute * 5
 )
+var (
+	ErrSendMailNotProvisioned = errors.New("sendmail not provisioned")
+)
 
 type SendmailInterface interface {
 	From() string
@@ -27,7 +31,8 @@ type SendmailInterface interface {
 }
 
 var (
-	instance SendmailInterface
+	instance    SendmailInterface
+	provisioned bool
 )
 
 type Emulator struct{}
@@ -67,6 +72,9 @@ func Init(viper *gviper.Viper, logger *logrus.Entry) error {
 		return fmt.Errorf("instance already set to type: %T", instance)
 	}
 	setting := *config.LoadSetting()
+	if setting.Provider == "" {
+		return ErrSendMailNotProvisioned
+	}
 	if !setting.Valid() {
 		return fmt.Errorf("invalid send email setting: %v", setting)
 	}
@@ -80,6 +88,7 @@ func Init(viper *gviper.Viper, logger *logrus.Entry) error {
 		WithField("provider", setting.Provider).
 		WithField("from", setting.From).
 		Infoln("Setting initialized.")
+	provisioned = true
 	return nil
 }
 
@@ -158,6 +167,9 @@ func SendCode(to, code string) (from string, err error) {
 }
 
 func SendEmail(to []string, subject, body string) error {
+	if !Provisioned() {
+		return ErrSendMailNotProvisioned
+	}
 	return instance.Send(instance.From(), subject, body, to, nil, nil)
 }
 
@@ -168,4 +180,8 @@ func SendEmailWithSMTP(to, subject, body string) error {
 	m.SetHeader("Subject", subject)
 	m.SetBody("text/html", body)
 	return instance.SendSMTP(to, m)
+}
+
+func Provisioned() bool {
+	return provisioned
 }

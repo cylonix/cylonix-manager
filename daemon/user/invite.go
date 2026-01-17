@@ -17,8 +17,8 @@ const (
 </h3>
 
 <p style="margin: 20px; text-align: center">
-	%s has invited you to join Cylonix. You can use Cylonix to securely share
-	devices and services.
+	%s has invited you to join %s Cylonix network. You can use Cylonix to
+	securely share devices and services.
 </p>
 
 <p style="margin: 20px; text-align: center">
@@ -35,7 +35,7 @@ const (
 
 <p style="margin: 20px; text-align: center; font-size: 80%%">
 	Need help getting started? Checkout our documentation at
-	<a href="https://cylonix.io" target="_blank">Cylonix.io</a>,
+	<a href="%s" target="_blank">%s</a>,
 	or reply to this email to talk to our support team.
 </p>
 
@@ -45,7 +45,7 @@ const (
 
 <p style="font-size: 80%%">
 	Does this email look suspicious or you don't recognize
-	the sender? Report abuse by emailing to contact@cylonix.io
+	the sender? Report abuse by emailing to %s
 </p>
 `
 
@@ -56,13 +56,13 @@ const (
 </h3>
 
 <p style="margin: 20px; text-align: center">
-	%s has invited you to join Cylonix. You can use Cylonix to securely share
-	devices and services.
+	%s has invited you to join %s Cylonix network. You can use Cylonix to
+	securely share devices and services.
 </p>
 
 <p style="margin: 20px; text-align: center">
 	Please click the link below to accept the invitation.
-	Then sign in with your oranization's sign-in provider,
+	Then sign in with your organization's sign-in provider,
 	and install Cylonix on your device to be part of the Cylonix network
 	for your organization.
 </p>
@@ -75,7 +75,7 @@ const (
 
 <p style="margin: 20px; text-align: center; font-size: 80%%">
 	Need help getting started? Checkout our documentation at
-	<a href="https://cylonix.io" target="_blank">Cylonix.io</a>,
+	<a href="%s" target="_blank">%s</a>,
 	or reply to this email to talk to our support team.
 </p>
 
@@ -85,24 +85,78 @@ const (
 
 <p style="font-size: 80%%">
 	Does this email look suspicious or you don't recognize
-	the sender? Report abuse by emailing to contact@cylonix.io
+	the sender? Report abuse by emailing to %s
+</p>
+`
+	InviteShareNodeEmailBody = `
+<p>Hello,</p>
+<h3 style="margin: 20px; text-align: center">
+	A device has been shared with you.
+</h3>
+
+<p style="margin: 20px; text-align: center">
+	%s has shared a device '%s' with you from their %s Cylonix network.
+
+	Accept the invitation using the button below. Then log in with your
+	preferred identity provider and ensure you have Cylonix installed on your
+	device. Once you've accepted the invitation, you can connect with %s's
+	device over Cylonix.
+
+	You should only accept invites from users you recognize.
+</p>
+
+<p style="margin: 20px; text-align: center">
+	<a href="%s" target="_blank">
+		Accept device invite
+	</a>
+</p>
+
+<p style="margin: 20px; text-align: center; font-size: 80%%">
+	Need help getting started? Checkout our documentation at
+	<a href="%s" target="_blank">%s</a>,
+	or reply to this email to talk to our support team.
+</p>
+
+<p>Best regards,</p>
+<p>Cylonix Team</p>
+<br></br>
+
+<p style="font-size: 80%%">
+	Does this email look suspicious or you don't recognize
+	the sender? Report abuse by emailing to %s
 </p>
 `
 )
 
-func inviteEmailSubject(inviterName string, isInternal bool) string {
+func inviteEmailSubject(inviterName string, shareNode *string, isInternal bool) string {
+	if shareNode != nil {
+		return fmt.Sprintf("%s shared a device with you over Cylonix", inviterName)
+	}
 	if isInternal {
 		return fmt.Sprintf("Welcome to join Cylonix network by %s", inviterName)
 	}
 	return fmt.Sprintf("%s invited you to join Cylonix", inviterName)
 }
 
-func inviteEmailBody(inviterName, code string, isInternal bool) string {
+func inviteEmailBody(inviterName, inviterNetwork, code string, shareNode *string, isInternal bool) string {
 	link := utils.InviteURL(code)
-	if isInternal {
-		return fmt.Sprintf(internalWelcomeEmailBody, inviterName, link)
+	contact, website := utils.GetContactEmailAndCompanyWebsite()
+	if shareNode != nil {
+		return fmt.Sprintf(
+			InviteShareNodeEmailBody, inviterName, *shareNode, inviterNetwork,
+			inviterName, link, website, website, contact,
+		)
 	}
-	return fmt.Sprintf(externalInviteEmailBody, inviterName, link)
+	if isInternal {
+		return fmt.Sprintf(
+			internalWelcomeEmailBody, inviterName, inviterNetwork, link,
+			website, website, contact,
+		)
+	}
+	return fmt.Sprintf(
+		externalInviteEmailBody, inviterName, inviterNetwork, link,
+		website, website, contact,
+	)
 }
 
 func inviteLink(code string) string {

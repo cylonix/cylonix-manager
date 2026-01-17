@@ -442,7 +442,8 @@ func (h *handlerImpl) passwordLogin(
 			return nil, nil, nil, nil, common.ErrInternalErr
 		}
 	}
-	if optional.Bool(user.IsAdminUser) || optional.Bool(user.IsSysAdmin) {
+	if (optional.Bool(user.IsAdminUser) || optional.Bool(user.IsSysAdmin)) &&
+		utils.MFAProvisioned() {
 		code := optional.String(params.MfaOneTimeCode)
 		if code == "" {
 			logger.Debugln("MFA code required.")

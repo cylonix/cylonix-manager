@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/cylonix/utils"
 	"github.com/sirupsen/logrus"
@@ -214,4 +215,47 @@ func ChangeExitNode(user *types.User, wgInfo *types.WgInfo, newWgName string, to
 	}
 	logger.WithField("new-wg", newWgName).Infoln("moved to new wg")
 	return
+}
+
+func NewSysadminTenant(namespace, creatorName, createNote string) (*types.TenantConfig, error) {
+	// namespace should not be the default namespace
+	if namespace == utils.DefaultNamespace {
+		return nil, fmt.Errorf("cannot create sysadmin tenant in default namespace")
+	}
+	tier, err := GetOrCreateDefaultUserTier()
+	if err != nil {
+		return nil, err
+	}
+	tenant := &types.TenantConfig{
+		Name:      "Sysadmin namespace",
+		Namespace: namespace,
+		UserTierID: &tier.ID,
+	}
+	if err := db.NewTenant(tenant, types.NilID, creatorName, createNote); err != nil {
+		return nil, err
+	}
+	return tenant, nil
+}
+
+func NewDefaultTenant(creatorName, createNote string) (*types.TenantConfig, error) {
+	tier, err := GetOrCreateDefaultUserTier()
+	if err != nil {
+		return nil, err
+	}
+
+	namespace := utils.DefaultNamespace
+	tenant := &types.TenantConfig{
+		Name:      "Default namespace",
+		Namespace: namespace,
+		TenantSetting: types.TenantSetting{
+			MaxUser:          math.MaxUint32, // Limit by user pay plan
+			MaxDevice:        math.MaxUint32, // Limit by user pay plan
+			MaxDevicePerUser: math.MaxUint32, // Limit by user pay plan
+		},
+		UserTierID: &tier.ID,
+	}
+	if err := db.NewTenant(tenant, types.NilID, creatorName, createNote); err != nil {
+		return nil, err
+	}
+	return tenant, nil
 }

@@ -19,6 +19,9 @@ var (
 
 func LoginInit(viperIn *gviper.Viper) {
 	viper = viperIn
+	if viper == nil {
+		viper = gviper.GetViper()
+	}
 	if noTLS {
 		return
 	}

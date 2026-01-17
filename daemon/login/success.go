@@ -124,8 +124,9 @@ func (s *loginSession) success() (*models.LoginSuccess, error) {
 
 func (s loginSession) setForSessionDetails(loginSuccess *models.LoginSuccess) error {
 	sessionID := s.forSession
+	log := s.logger.WithField("sessionID", sessionID)
 	if sessionID == "" {
-		s.logger.Debugln("No session ID provided, skipping setting session details.")
+		log.Debugln("No session ID provided, skipping setting session details.")
 		return nil
 	}
 	stateToken := &utils.OauthStateToken{
@@ -133,14 +134,19 @@ func (s loginSession) setForSessionDetails(loginSuccess *models.LoginSuccess) er
 	}
 	stateTokenData, err := stateToken.Get()
 	if err != nil {
-		s.logger.WithError(err).Errorln("Failed to get state token data.")
+		// If session ID is invalid or expired, just skip setting session details.
+		if errors.Is(err, utils.ErrTokenExpired) || errors.Is(err, utils.ErrTokenNotExists) {
+			log.Debugln("Session ID is invalid or expired, skipping setting session details.")
+			return nil
+		}
+		log.WithError(err).Errorln("Failed to get state token data.")
 		return err
 	}
 	if stateTokenData.NodeKey == "" {
-		s.logger.Debugf("State token data node key is empty, skipping setting session details. data= %#v", *stateTokenData)
+		log.WithField("stateTokenData", *stateTokenData).
+			Debugln("State token data node key is empty, skipping setting session details")
 		return nil
 	}
-	s.logger.Debugf("setting state token data: %#v", *stateTokenData)
 	loginSuccess.ConfirmSession = &models.LoginConfirmSession{
 		SessionID:       sessionID,
 		MachineKey:      stateTokenData.MachineKey,

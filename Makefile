@@ -92,7 +92,7 @@ endif
 docker: alpine
 alpine:
 	$(DOT_CLEAN)
-	DOCKER_DEFAULT_PLATFORM="linux/amd64" docker build  \
+	DOCKER_DEFAULT_PLATFORM="linux/amd64" docker build \
 		--network host \
 		-f docker/Dockerfile.$@ \
 		--tag cylonix/${APP_NAME}:$@-$(VERSION) \

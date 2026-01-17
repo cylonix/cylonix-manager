@@ -149,7 +149,7 @@ var (
 			},
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
-				{
+		{
 			ID: "2025011170900",
 			Migrate: func(tx *gorm.DB) error {
 				log.Printf(`
@@ -157,6 +157,18 @@ var (
 				`)
 				return tx.AutoMigrate(
 					&types.WgInfo{},
+				)
+			},
+			Rollback: func(db *gorm.DB) error { return nil },
+		},
+		{
+			ID: "202601050900",
+			Migrate: func(tx *gorm.DB) error {
+				log.Printf(`
+					Migrating to add ShareNode support for user invite.
+				`)
+				return tx.AutoMigrate(
+					&types.UserInvite{},
 				)
 			},
 			Rollback: func(db *gorm.DB) error { return nil },

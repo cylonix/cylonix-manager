@@ -26,3 +26,8 @@ export TASK_INTERVAL=${TASK_INTERVAL:-60}
 
 # Headscale
 export HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN:-"example.com"}
+
+# Branding
+export COMPANY_NAME=${COMPANY_NAME:-"EZBLOCK INC."}
+export COMPANY_WEBSITE=${COMPANY_WEBSITE:-"https://cylonix.io"}
+export CONTACT_EMAIL=${CONTACT_EMAIL:-"contact@cylonix.io"}

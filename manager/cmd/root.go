@@ -55,7 +55,7 @@ namespace. The namespace is consistent with VPN, Firewall and SD-WAN services.`,
 			panic("nil viper setting")
 		}
 
-		daemon, err := daemon.NewDaemon(ctx, cmd, viper)
+		daemon, err := daemon.NewDaemon(ctx, cmd, viper, nil)
 		if err != nil {
 			log.Fatalf("Failed to create daemon: %v", err)
 		}

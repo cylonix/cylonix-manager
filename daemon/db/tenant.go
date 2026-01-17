@@ -157,7 +157,7 @@ func UpdateTenantConfig(tenantID types.TenantID, update types.TenantConfig, upda
 	tx = tx.Begin()
 	defer tx.Rollback()
 
-	// TODO: look into using nested transcations instead.
+	// TODO: look into using nested transactions instead.
 
 	// Make sure company name does not have a conflict by creating a new
 	// approval entry. Only need to check tenant registration as the uniqueness

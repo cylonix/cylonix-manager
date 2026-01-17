@@ -1,5 +1,5 @@
 
-FROM golang:1.24.4-alpine AS build-env
+FROM golang:1.24.11-alpine AS build-env
 
 WORKDIR /go/src/cylonix/manager
 
@@ -31,11 +31,15 @@ ARG VERSION_GIT_HASH=""
 ENV VERSION_GIT_HASH=$VERSION_GIT_HASH
 ARG TARGETARCH
 
-RUN GOARCH=$TARGETARCH go install -ldflags="\
+# Limit parallel compilation to avoid memory issues
+# -gcflags="all=-N -l" can be removed in production to reduce memory during compilation
+ENV GOCACHE=/tmp/go-cache
+RUN GOARCH=$TARGETARCH go install -p 2 -ldflags="\
     -X cylonix.io/version.longStamp=$VERSION_LONG \
     -X cylonix.io/version.shortStamp=$VERSION_SHORT \
     -X cylonix.io/version.gitCommitStamp=$VERSION_GIT_HASH" \
-    -v ./manager ./cmd/task
+    -v ./manager ./cmd/task && \
+    rm -rf /tmp/go-cache
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates gettext

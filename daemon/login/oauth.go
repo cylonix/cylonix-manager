@@ -11,7 +11,6 @@ import (
 	"cylonix/sase/pkg/optional"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -212,38 +211,15 @@ func newOauthIDTokenLoginSession(
 }
 
 func (s *oauthSession) newSysadminTenant() (*types.TenantConfig, error) {
-	namespace := utils.SysAdminNamespace
-	tenant := &types.TenantConfig{
-		Name:      "Sysadmin namespace",
-		Namespace: namespace,
-	}
-	if err := db.NewTenant(tenant, types.NilID, s.oauthUser.DisplayName, "created automatically by oauth session."); err != nil {
-		return nil, err
-	}
-	return tenant, nil
+	return common.NewSysadminTenant(
+		utils.SysAdminNamespace,
+		s.oauthUser.DisplayName,
+		"created automatically by oauth session.",
+	)
 }
 
 func (s *oauthSession) NewDefaultTenant() (*types.TenantConfig, error) {
-	tier, err := common.GetOrCreateDefaultUserTier()
-	if err != nil {
-		return nil, err
-	}
-
-	namespace := utils.DefaultNamespace
-	tenant := &types.TenantConfig{
-		Name:      "Default namespace",
-		Namespace: namespace,
-		TenantSetting: types.TenantSetting{
-			MaxUser:          math.MaxUint32, // Limit by user pay plan
-			MaxDevice:        math.MaxUint32, // Limit by user pay plan
-			MaxDevicePerUser: math.MaxUint32, // Limit by user pay plan
-		},
-		UserTierID: &tier.ID,
-	}
-	if err := db.NewTenant(tenant, types.NilID, "not applicable", "created automatically."); err != nil {
-		return nil, err
-	}
-	return tenant, nil
+	return common.NewDefaultTenant("oauth login", "created automatically by oauth session.")
 }
 
 func (s *oauthSession) setTenant() error {
@@ -332,10 +308,15 @@ func (s *oauthSession) setUser() (*models.ApprovalState, error) {
 			s.logger.WithField("email", s.oauthUser.Email).Debugln("Email not in invite emails.")
 			return nil, db.ErrUserInviteNotExists
 		}
-		networkDomain = invite.NetworkDomain
 		namespace = invite.Namespace
-		if invite.Role != "" {
-			roles = append(roles, invite.Role)
+		if invite.ShareNode != nil {
+			// If sharing node, simply create the user with a new network domain.
+			networkDomain = ""
+		} else {
+			networkDomain = invite.NetworkDomain
+			if invite.Role != "" {
+				roles = append(roles, invite.Role)
+			}
 		}
 	}
 

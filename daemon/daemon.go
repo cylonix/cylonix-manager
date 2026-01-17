@@ -101,16 +101,18 @@ var (
 )
 
 // NewDaemon creates and returns a new Daemon.
-func NewDaemon(ctx context.Context, cmd *cobra.Command, viper *gviper.Viper) (*Daemon, error) {
+func NewDaemon(ctx context.Context, cmd *cobra.Command, viper *gviper.Viper, setting *utils.ConfigCheckSetting) (*Daemon, error) {
 	utils.Init(viper)
 	common.StartResourceInstance(daemonLogger)
 	// Check critical settings first.
-	setting := utils.ConfigCheckSetting{
-		IPDrawer:  true,
-		ETCD:      true,
-		Postgres:  true,
+	if setting == nil {
+		setting = &utils.ConfigCheckSetting{
+			IPDrawer:  true,
+			ETCD:      true,
+			Postgres:  true,
+		}
 	}
-	config, err := utils.InitCfgFromViper(viper, setting)
+	config, err := utils.InitCfgFromViper(viper, *setting)
 	if err != nil {
 		daemonLogger.WithError(err).Errorln("failed to init config")
 		return nil, err
@@ -133,10 +135,12 @@ func NewDaemon(ctx context.Context, cmd *cobra.Command, viper *gviper.Viper) (*D
 
 	// Send mail config.
 	if err := sendmail.Init(viper, daemonLogger); err != nil {
-		daemonLogger.WithError(err).Errorln("failed to init email send code service.")
-		return nil, err
+		if !errors.Is(err, sendmail.ErrSendMailNotProvisioned) || setting.SendEmail {
+			daemonLogger.WithError(err).Errorln("failed to init email send code service.")
+			return nil, err
+		}
+		daemonLogger.Warnln("Email sending is not provisioned but not required.")
 	}
-
 	// Login cookie config.
 	pu.LoginInit(d.viper)
 
@@ -388,10 +392,15 @@ func (d *Daemon) Run() error {
 
 func (d *Daemon) initSysAdmin() error {
 	namespace, username, password, email, firstName, lastName := utils.GetCylonixAdminInfo()
+	log := d.Logger().WithFields(logrus.Fields{
+		"handle": "initSysAdmin",
+		"username": username,
+		"namespace": namespace,
+	}).WithField("sysadmin", username)
 	login, err := db.GetUserLoginByLoginName("", username)
 	if err != nil {
 		if !errors.Is(err, db.ErrUserLoginNotExists) {
-			return fmt.Errorf("failed to check if user login exists: %w", err)
+			return fmt.Errorf("failed to check if sysadmin user login exists: %w", err)
 		}
 		// Fall through to create the user.
 	} else {
@@ -399,7 +408,7 @@ func (d *Daemon) initSysAdmin() error {
 		err := db.GetUser(login.UserID, user)
 		if err == nil {
 			if optional.Bool(user.IsSysAdmin) {
-				d.Logger().Infof("Sys admin user %s already exists", username)
+				log.Infoln("Sys admin user already exists. Skip init...")
 				return nil
 			}
 			return fmt.Errorf("user %s exists and is not sys admin", username)
@@ -408,11 +417,26 @@ func (d *Daemon) initSysAdmin() error {
 			return fmt.Errorf("failed to check if user exists: %w", err)
 		}
 	}
-	_, err = db.AddSysAdminUser(namespace, email, "", firstName + " " + lastName, username, password)
+	// Check if namespace exists.
+	displayName := firstName + " " + lastName
+	_, err = db.GetTenantConfigByNamespace(namespace)
+	if err != nil {
+		if errors.Is(err, db.ErrTenantNotExists) {
+			_, err = common.NewSysadminTenant(namespace, displayName, "created automatically by daemon init.")
+			if err != nil {
+				return fmt.Errorf("failed to create sysadmin tenant: %w", err)
+			}
+			log.Infoln("Created sys admin tenant")
+		} else {
+			return fmt.Errorf("failed to check if sysadmin tenant exists: %w", err)
+		}
+	}
+
+	_, err = db.AddSysAdminUser(namespace, email, "", displayName, username, password)
 	if err != nil {
 		return fmt.Errorf("failed to create sys admin user: %w", err)
 	}
-	d.Logger().Infof("Created sys admin user %s", username)
+	log.Infoln("Created sys admin user")
 	return nil
 }
 
