@@ -76,6 +76,7 @@ func GetUserList(
 		Preload("Labels").
 		Preload("UserBaseInfo").
 		Preload("UserLogins").
+		Preload("UserLogins.CustomAuth").
 		Preload("UserTier")
 	if err = pg.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -333,6 +334,7 @@ func getUserPreloadConn() (*gorm.DB, error) {
 		Preload("Labels").
 		Preload("FwStats").
 		Preload("UserLogins").
+		Preload("UserLogins.CustomAuth").
 		Preload("UserTier").
 		Preload("UserBaseInfo"), nil
 }

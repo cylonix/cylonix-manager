@@ -1,5 +1,5 @@
 
-FROM golang:1.24.11-alpine AS build-env
+FROM golang:1.24-bookworm AS builder
 
 WORKDIR /go/src/cylonix/manager
 
@@ -31,10 +31,11 @@ ARG VERSION_GIT_HASH=""
 ENV VERSION_GIT_HASH=$VERSION_GIT_HASH
 ARG TARGETARCH
 
-# Limit parallel compilation to avoid memory issues
-# -gcflags="all=-N -l" can be removed in production to reduce memory during compilation
 ENV GOCACHE=/tmp/go-cache
-RUN GOARCH=$TARGETARCH go install -p 2 -ldflags="\
+
+# Limit parallel compilation to avoid memory issues
+# CGO_ENABLED=0 ensures the final binary works on Alpine
+RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go install -p 1 -ldflags="\
     -X cylonix.io/version.longStamp=$VERSION_LONG \
     -X cylonix.io/version.shortStamp=$VERSION_SHORT \
     -X cylonix.io/version.gitCommitStamp=$VERSION_GIT_HASH" \
@@ -44,7 +45,7 @@ RUN GOARCH=$TARGETARCH go install -p 2 -ldflags="\
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates gettext
 
-COPY --from=build-env /go/bin/* /usr/local/bin/
+COPY --from=builder /go/bin/* /usr/local/bin/
 COPY docker/entrypoint.sh  /opt
 COPY docker/defaults.sh /opt
 COPY docker/templates /opt/templates

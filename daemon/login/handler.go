@@ -21,15 +21,18 @@ import (
 
 type serviceHandler interface {
 	AddLogin(auth interface{}, requestObject api.AddLoginRequestObject) error
+	AddOauthProvider(auth interface{}, requestObject api.AddOauthProviderRequestObject) (*models.RedirectURLConfig, error)
+	AddOauthToken(auth interface{}, requestObject api.AddOauthTokenRequestObject) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error)
 	ConfirmSession(auth interface{}, requestObject api.ConfirmSessionRequestObject) error
+	DeleteOauthProviders(auth interface{}, requestObject api.DeleteOauthProvidersRequestObject) error
 	DirectLogin(auth interface{}, requestObject api.LoginRequestObject) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, *models.AdditionalAuthInfo, error)
+	ListOauthProviders(auth interface{}, requestObject api.ListOauthProvidersRequestObject) (int, []models.OauthProvider, error)
+	Logout(auth interface{}, requestObject api.LogoutRequestObject) (*models.RedirectURLConfig, error)
 	OauthLogins() ([]models.LoginType, error)
 	OauthRedirectURL(auth interface{}, requestObject api.GetOauthRedirectURLRequestObject) (*models.RedirectURLConfig, error)
 	OauthCallback(auth interface{}, requestObject api.OauthCallbackRequestObject) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error)
 	OauthCallbackPost(auth interface{}, requestObject api.OauthCallbackPostRequestObject) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error)
-	AddOauthToken(auth interface{}, requestObject api.AddOauthTokenRequestObject) (*models.LoginSuccess, *models.RedirectURLConfig, *models.ApprovalState, error)
 	RefreshToken(auth interface{}, requestObject api.RefreshTokenRequestObject) (*models.LoginSuccess, error)
-	Logout(auth interface{}, requestObject api.LogoutRequestObject) (*models.RedirectURLConfig, error)
 }
 
 type LoginService struct {
@@ -48,8 +51,11 @@ func (s *LoginService) Register(d *api.StrictServer) error {
 	d.OauthCallbackHandler = s.oauthCallback
 	d.OauthCallbackPostHandler = s.oauthCallbackPost
 	d.OauthLoginsHandler = s.oauthLogins
+	d.AddOauthProviderHandler = s.addOauthProvider
 	d.AddOauthTokenHandler = s.addOauthToken
 	d.RefreshTokenHandler = s.refreshToken
+	d.ListOauthProvidersHandler = s.listOauthProviders
+	d.DeleteOauthProvidersHandler = s.deleteOauthProviders
 	d.LogoutHandler = s.logout
 	return nil
 }
@@ -303,6 +309,63 @@ func (l *LoginService) oauthLogins(ctx context.Context, requestObject api.OauthL
 		return api.OauthLogins200JSONResponse{OauthLoginsJSONResponse: api.OauthLoginsJSONResponse{Logins: logins}}, nil
 	}
 	return api.OauthLogins500JSONResponse{}, nil
+}
+
+func (l *LoginService) addOauthProvider(ctx context.Context, requestObject api.AddOauthProviderRequestObject) (api.AddOauthProviderResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	redirect, err := l.handler.AddOauthProvider(auth, requestObject)
+	if err == nil {
+		return api.AddOauthProvider200TextResponse(*redirect.EncodedRedirectURL), nil
+	}
+	if errors.As(err, &common.ConflictErr{}) {
+		code, msg := "CONFLICT", err.Error()
+		return api.AddOauthProvider409JSONResponse{
+			ConflictErrorJSONResponse: api.ConflictErrorJSONResponse{
+				ErrorCode:    &code,
+				ErrorMessage: &msg,
+			},
+		}, nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.AddOauthProvider500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.AddOauthProvider401Response{}, nil
+	}
+	return api.AddOauthProvider400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
+func (l *LoginService) listOauthProviders(ctx context.Context, requestObject api.ListOauthProvidersRequestObject) (api.ListOauthProvidersResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	total, list, err := l.handler.ListOauthProviders(auth, requestObject)
+	if err == nil {
+		return api.ListOauthProviders200JSONResponse{
+			OauthProviders: list, Total: total,
+		}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.ListOauthProviders401Response{}, nil
+	}
+	return api.ListOauthProviders500JSONResponse{}, nil
+}
+
+func (l *LoginService) deleteOauthProviders(ctx context.Context, requestObject api.DeleteOauthProvidersRequestObject) (api.DeleteOauthProvidersResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	err := l.handler.DeleteOauthProviders(auth, requestObject)
+	if err == nil {
+		return api.DeleteOauthProviders200TextResponse(""), nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.DeleteOauthProviders500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.DeleteOauthProviders401Response{}, nil
+	}
+	return api.DeleteOauthProviders400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
 }
 
 func (l *LoginService) addOauthToken(ctx context.Context, requestObject api.AddOauthTokenRequestObject) (api.AddOauthTokenResponseObject, error) {

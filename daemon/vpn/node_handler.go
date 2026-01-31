@@ -220,13 +220,15 @@ func (n *NodeHandler) addNewNode(
 	// Device approved or auto-approved.
 	var (
 		os          = ""
-		hostname    = ""
+		hostname    = node.GivenName
 		srcIP       = ""
 		routableIPs = []netip.Prefix{}
 	)
 	if node.Hostinfo != nil {
 		os = node.Hostinfo.OS
-		hostname = node.Hostinfo.Hostname
+		if hostname == "" {
+			hostname = node.Hostinfo.Hostname
+		}
 		routableIPs = node.Hostinfo.RoutableIPs
 		for _, prefix := range node.Hostinfo.RoutableIPs {
 			if prefix.IsSingleIP() && !prefix.Addr().IsPrivate() {

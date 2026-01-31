@@ -286,4 +286,128 @@ func TestDeviceDB(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("list-devices-sort-by-wginfo", func(t *testing.T) {
+		// Create multiple devices with WgInfo for sorting tests
+		var idList []types.DeviceID
+		defer func() {
+			assert.Nil(t, DeleteUserDevices(nil, namespace, userID, idList))
+		}()
+
+		// Create test devices with different WgInfo values
+		testData := []struct {
+			name         string
+			publicKey    string
+			ip           string
+			rxBytes      uint64
+			txBytes      uint64
+		}{
+			{"device-alpha", "pubkey-aaa", "100.64.0.1", 1000, 5000},
+			{"device-charlie", "pubkey-ccc", "100.64.0.3", 3000, 1000},
+			{"device-bravo", "pubkey-bbb", "100.64.0.2", 2000, 3000},
+		}
+
+		for _, td := range testData {
+			deviceID, err := types.NewID()
+			if !assert.Nil(t, err) {
+				return
+			}
+			idList = append(idList, deviceID)
+
+			device := &types.Device{
+				Model:     types.Model{ID: deviceID},
+				Namespace: namespace,
+				UserID:    userID,
+			}
+			assert.Nil(t, AddUserDevice(namespace, userID, device))
+
+			// Add WgInfo
+			ip, err := netip.ParsePrefix(td.ip + "/32")
+			assert.Nil(t, err)
+
+			wgInfo := &types.WgInfo{
+				Model:        types.Model{ID: deviceID},
+				DeviceID:     deviceID,
+				Namespace:    namespace,
+				UserID:       userID,
+				Name:         td.name,
+				PublicKeyHex: td.publicKey,
+				Addresses:    []netip.Prefix{ip},
+				RxBytes:      td.rxBytes,
+				TxBytes:      td.txBytes,
+			}
+			assert.Nil(t, CreateWgInfo(wgInfo))
+		}
+
+		// Test sorting by WgInfo name (ascending)
+		sortBy := "wg_name"
+		sortDesc := "asc"
+		devices, total, err := ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, "device-alpha", devices[0].WgInfo.Name)
+			assert.Equal(t, "device-bravo", devices[1].WgInfo.Name)
+			assert.Equal(t, "device-charlie", devices[2].WgInfo.Name)
+		}
+
+		// Test sorting by WgInfo name (descending)
+		sortDesc = "desc"
+		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, "device-charlie", devices[0].WgInfo.Name)
+			assert.Equal(t, "device-bravo", devices[1].WgInfo.Name)
+			assert.Equal(t, "device-alpha", devices[2].WgInfo.Name)
+		}
+
+		// Test sorting by public key
+		sortBy = "public_key"
+		sortDesc = "asc"
+		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, "pubkey-aaa", devices[0].WgInfo.PublicKeyHex)
+			assert.Equal(t, "pubkey-bbb", devices[1].WgInfo.PublicKeyHex)
+			assert.Equal(t, "pubkey-ccc", devices[2].WgInfo.PublicKeyHex)
+		}
+
+		// Test sorting by IP address
+		sortBy = "ip"
+		sortDesc = "asc"
+		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, "100.64.0.1/32", devices[0].WgInfo.Addresses[0].String())
+			assert.Equal(t, "100.64.0.2/32", devices[1].WgInfo.Addresses[0].String())
+			assert.Equal(t, "100.64.0.3/32", devices[2].WgInfo.Addresses[0].String())
+		}
+
+		// Test sorting by rx_bytes
+		sortBy = "rx_bytes"
+		sortDesc = "asc"
+		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, uint64(1000), devices[0].WgInfo.RxBytes)
+			assert.Equal(t, uint64(2000), devices[1].WgInfo.RxBytes)
+			assert.Equal(t, uint64(3000), devices[2].WgInfo.RxBytes)
+		}
+
+		// Test sorting by tx_bytes (descending)
+		sortBy = "tx_bytes"
+		sortDesc = "desc"
+		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(3), total)
+		if assert.Len(t, devices, 3) {
+			assert.Equal(t, uint64(5000), devices[0].WgInfo.TxBytes)
+			assert.Equal(t, uint64(3000), devices[1].WgInfo.TxBytes)
+			assert.Equal(t, uint64(1000), devices[2].WgInfo.TxBytes)
+		}
+	})
 }

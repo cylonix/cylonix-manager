@@ -4,6 +4,7 @@
 package login
 
 import (
+	"context"
 	api "cylonix/sase/api/v2"
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/daemon/common"
@@ -14,10 +15,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	ulog "github.com/cylonix/utils/log"
+	"github.com/cylonix/utils/oauth"
 	pw "github.com/cylonix/utils/password"
 	"github.com/google/uuid"
 
@@ -319,6 +322,7 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 		}
 	}
 	logger = logger.WithField(ulog.Namespace, namespace)
+	appListeningPort := optional.Int(params.AppListeningPort)
 
 	if params.Provider == nil || *params.Provider == "" {
 		if params.Email == nil || *params.Email == "" {
@@ -337,11 +341,26 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 			login, err := db.GetUserLoginByLoginName(namespace, email)
 			if err != nil {
 				if errors.Is(err, db.ErrUserLoginNotExists) {
-					logger.WithError(err).Debugln("Login not exists.")
-					return nil, common.ErrModelUnauthorized
+					// User does not exist. Check if the domain has been registered.
+					// Custom domain can only be created if user can validate domain
+					// ownership through web finger.
+					domain := strings.SplitN(email, "@", 2)[1]
+					customAuth, err := db.GetAuthProviderByDomain(namespace, domain)
+					if err != nil {
+						if errors.Is(err, db.ErrAuthProviderNotExists) {
+							logger.WithError(err).Debugln("Login not exists.")
+							return nil, common.ErrModelUnauthorized
+						}
+						logger.WithError(err).Errorln("Failed to check auth provider domain.")
+						return nil, common.ErrInternalErr
+					}
+					return newCustomAuthRedirectURL(customAuth, userType, &params, logger)
 				}
 				logger.WithError(err).Errorln("Failed to get user login.")
 				return nil, common.ErrInternalErr
+			}
+			if login.CustomAuth != nil {
+				return newCustomAuthRedirectURL(login.CustomAuth, userType, &params, logger)
 			}
 			provider := login.LoginProvider()
 			if provider != "" {
@@ -361,15 +380,41 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 		return nil, common.NewBadParamsErr(err)
 	}
 
-	appListeningPort := 0
-	if params.AppListeningPort != nil && *params.AppListeningPort != 0 {
-		appListeningPort = int(*params.AppListeningPort)
-	}
 	return newOauthLoginRedirectURL(
 		provider, namespace, common.UserTypeUser, *params.Provider,
 		optional.V(params.SessionID, ""),
 		optional.V(params.InvitationCode, ""),
-		optional.V(params.RedirectURL, ""), appListeningPort, logger,
+		optional.V(params.RedirectURL, ""),
+		appListeningPort, true, logger,
+	)
+}
+
+func newCustomAuthRedirectURL(
+	auth *types.AuthProvider, userType string,
+	params *models.GetOauthRedirectURLParams,
+	logger *logrus.Entry,
+) (*models.RedirectURLConfig, error) {
+	// Encode auth provider ID in the provider name to lookup later.
+	providerName :=  auth.Name()
+	provider, err := oauth.NewOAuth(oauth.Config{
+		Provider:     providerName,
+		ClientID:     auth.ClientID,
+		ClientSecret: auth.ClientSecret,
+		ConfigURL:    auth.IssuerURL,
+		RedirectURI:  utils.OauthCallbackURL(),
+	})
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to create OAuth provider.")
+		return nil, common.ErrInternalErr
+	}
+	return newOauthLoginRedirectURL(
+		provider,
+		auth.Namespace, userType, providerName,
+		optional.V(params.SessionID, ""),
+		optional.V(params.InvitationCode, ""),
+		optional.V(params.RedirectURL, ""),
+		optional.V(params.AppListeningPort, 0),
+		true, logger,
 	)
 }
 
@@ -410,7 +455,7 @@ func (h *handlerImpl) passwordLogin(
 	*models.ApprovalState, *models.AdditionalAuthInfo, error,
 ) {
 	namespace = strings.ToLower(strings.TrimSpace(namespace)) // Normalize namespace
-	username = strings.TrimSpace(username) // Normalize username
+	username = strings.TrimSpace(username)                    // Normalize username
 	// Lower case the username if it is an email.
 	if strings.Contains(username, "@") {
 		username = strings.ToLower(username)
@@ -478,6 +523,225 @@ func (h *handlerImpl) passwordLogin(
 	l.wgName = wgName
 	loginSuccess, redirect, err := l.result()
 	return loginSuccess, redirect, nil, nil, err
+}
+
+func (h *handlerImpl) AddOauthProvider(
+	auth interface{}, requestObject api.AddOauthProviderRequestObject,
+) (*models.RedirectURLConfig, error) {
+	token, _, _, logger := common.ParseToken(auth, "add-oauth-provider", "Add oauth provider", h.logger)
+	// Custom namespace is only allowed by sysadmin.
+	authProvider := requestObject.Body
+	ofNamespace := optional.String(authProvider.Namespace)
+	if ofNamespace != "" {
+		if token == nil || !token.IsSysAdmin {
+			logger.Warnln("Non-sysadmin user trying to add oauth provider to custom namespace.")
+			return nil, common.ErrModelUnauthorized
+		}
+		ofNamespace = types.NormalizeNamespace(ofNamespace)
+	}
+	if ofNamespace == "" {
+		ofNamespace = utils.DefaultNamespace
+	}
+	// Validate domain through web finger
+	adminEmail := strings.ToLower(strings.TrimSpace(authProvider.AdminEmail))
+	domain := strings.ToLower(strings.TrimSpace(authProvider.Domain))
+	if domain == "" {
+		err := errors.New("missing domain")
+		logger.WithError(err).Errorln("Invalid params.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	if authProvider.ClientID == "" || authProvider.ClientSecret == "" {
+		err := errors.New("missing provider credentials")
+		logger.WithError(err).Errorln("Invalid params.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	adminDomain := strings.SplitN(adminEmail, "@", 2)
+	if len(adminDomain) != 2 || !strings.EqualFold(adminDomain[1], domain) {
+		err := errors.New("admin account does not match domain")
+		logger.WithError(err).Errorln("Invalid params.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	adminUsername := adminDomain[0]
+	webFingerURL := fmt.Sprintf("https://%s/.well-known/webfinger?resource=acct:%s", domain, adminEmail)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", webFingerURL, nil)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to create web finger request.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	webFingerData, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to fetch web finger data.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	defer webFingerData.Body.Close()
+	if webFingerData.StatusCode != 200 {
+		err := fmt.Errorf("web finger returned status %v", webFingerData.StatusCode)
+		logger.WithError(err).Errorln("Failed to validate domain.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	var webFingerResp struct {
+		Subject string `json:"subject"`
+		Links   []struct {
+			Rel  string `json:"rel"`
+			Href string `json:"href"`
+		} `json:"links"`
+	}
+	if err := json.NewDecoder(webFingerData.Body).Decode(&webFingerResp); err != nil {
+		logger.WithError(err).Errorln("Failed to decode web finger response.")
+		err = fmt.Errorf("invalid web finger response: %v", err)
+		return nil, common.NewBadParamsErr(err)
+	}
+	expectedSubject := fmt.Sprintf("acct:%s@%s", adminUsername, domain)
+	if !strings.EqualFold(webFingerResp.Subject, expectedSubject) {
+		err := fmt.Errorf("web finger subject mismatch: %v", webFingerResp.Subject)
+		logger.WithError(err).Errorln("Web finger subject mismatch.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	issuerURL := ""
+	for _, link := range webFingerResp.Links {
+		if link.Rel == "http://openid.net/specs/connect/1.0/issuer" {
+			issuerURL = link.Href
+			break
+		}
+	}
+	if issuerURL == "" {
+		err := errors.New("missing issuer url in web finger response")
+		logger.WithError(err).Errorln("Missing issuer url in web finger response.")
+		return nil, common.NewBadParamsErr(err)
+	}
+	// Now compare the issuer URL with the one we already supported.
+	// If it is already exists, reject the request and let user know
+	// they don't need to create a custom provider and instead can
+	// just login with the existing one. e.g. google, microsoft, etc.
+	provider := oauth.IssuerURLToProvider(issuerURL)
+	if provider != "" {
+		logger.WithField("provider", provider).Debugln("Checking existing providers.")
+		supported := utils.AuthProviders()
+		for _, p := range supported {
+			if p == provider {
+				err := fmt.Errorf("domain issuer matches existing provider: %v", provider)
+				logger.WithError(err).Errorln("No need to create custom provider.")
+				return nil, common.NewConflictErr(err)
+			}
+		}
+	}
+
+	// Encode the new provider into a JSON string that can be used later.
+	newAuth := &types.AuthProvider{
+		Namespace:    ofNamespace,
+		Domain:       domain,
+		AdminEmail:   adminEmail,
+		IssuerURL:    issuerURL,
+		WebFingerURL: webFingerURL,
+		Provider:     optional.String(authProvider.Provider),
+		ClientID:     authProvider.ClientID,
+		ClientSecret: authProvider.ClientSecret,
+		Scopes:       optional.String(authProvider.Scopes),
+	}
+	v, err := json.Marshal(newAuth)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to encode auth provider.")
+		return nil, common.ErrInternalErr
+	}
+	providerName :=  newAuth.Name()
+	p, err := oauth.NewOAuth(oauth.Config{
+		Provider:     providerName,
+		ClientID:     authProvider.ClientID,
+		ClientSecret: authProvider.ClientSecret,
+		ConfigURL:    issuerURL,
+		RedirectURI:  utils.OauthCallbackURL(),
+	})
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to create OAuth provider.")
+		return nil, common.ErrInternalErr
+	}
+
+	state := utils.NewOauthStateToken(ofNamespace)
+	redirectURL := optional.String(requestObject.Params.RedirectURL)
+	stateData := utils.OauthStateTokenData{
+		Namespace:     ofNamespace,
+		Token:         state.Token,
+		Provider:      "custom-add-oidc-" + string(v),
+		RedirectURL:   redirectURL,
+	}
+	if err := state.Update(&stateData, 30*time.Minute); err != nil {
+		logger.WithError(err).Errorln("Failed to save state token data.")
+		return nil, common.ErrInternalErr
+	}
+	url, err := newOauthLoginRedirectURL(
+		p, ofNamespace, "", providerName,
+		state.Token, "", redirectURL, 0,
+		false /* avoid overwriting the provider field */,
+		logger,
+	)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to create redirect URL.")
+		state.Delete()
+		return nil, common.ErrInternalErr
+	}
+
+	// Now return a redirect URL to let user login through the new provider.
+	// through the issuer URL. Upon successful login, we will save the new
+	// auth provider into the database.
+	logger.WithField("redirect-url-str", optional.String(url.EncodedRedirectURL)).
+		Infoln("Custom oauth provider redirect URL generated.")
+	return url, nil
+}
+
+func (h *handlerImpl) ListOauthProviders(
+	auth interface{}, requestObject api.ListOauthProvidersRequestObject,
+) (int, []models.OauthProvider, error) {
+	token, namespace, _, logger := common.ParseToken(
+		auth, "list-oauth-providers", "List oauth providers", h.logger,
+	)
+	if token == nil || !token.IsAdminUser {
+		return 0, nil, common.ErrModelUnauthorized
+	}
+	ofNamespace := ""
+	if !token.IsSysAdmin {
+		ofNamespace = namespace
+	}
+	params := requestObject.Params
+	total, list, err := db.ListAuthProviders(
+		ofNamespace, params.FilterBy, params.FilterValue,
+		params.SortBy, params.SortDesc, params.Page, params.PageSize,
+	)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to list auth providers.")
+		return 0, nil, common.ErrInternalErr
+	}
+	result := make([]models.OauthProvider, 0, len(list))
+	for _, ap := range list {
+		model := ap.ToModel()
+		result = append(result, *model)
+	}
+	return total, result, nil
+}
+
+func (h *handlerImpl) DeleteOauthProviders(
+	auth interface{}, requestObject api.DeleteOauthProvidersRequestObject,
+) error {
+	token, namespace, _, logger := common.ParseToken(
+		auth, "delete-oauth-providers", "Delete oauth providers", h.logger,
+	)
+	if token == nil || !token.IsAdminUser {
+		return common.ErrModelUnauthorized
+	}
+	ofNamespace := ""
+	if !token.IsSysAdmin {
+		ofNamespace = namespace
+	}
+	idList := types.UUIDListToIDList(requestObject.Body)
+	err := db.DeleteAuthProviders(
+		ofNamespace, idList,
+	)
+	if err != nil {
+		logger.WithError(err).Errorln("Failed to delete auth providers.")
+		return common.ErrInternalErr
+	}
+	return nil
 }
 
 func (h *handlerImpl) AddOauthToken(

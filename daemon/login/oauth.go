@@ -9,6 +9,7 @@ import (
 	"cylonix/sase/daemon/db"
 	"cylonix/sase/daemon/db/types"
 	"cylonix/sase/pkg/optional"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -39,13 +40,20 @@ func oauthProviderToLoginType(provider string) types.LoginType {
 	case oauth.KeyCloakUserLogin:
 		return types.LoginTypeUsername
 	default:
+		if strings.HasPrefix(provider, "custom-oidc-") {
+			return types.LoginTypeCustomOIDC
+		}
 		return types.LoginTypeUnknown
 	}
 }
-func oauthUserToUserLogin(namespace string, user *oauth.User, password string) (*types.UserLogin, error) {
+func (s *oauthSession) oauthUserToUserLogin(namespace string, user *oauth.User, password string) (*types.UserLogin, error) {
 	loginType := oauthProviderToLoginType(user.Provider)
 	if password != "" {
 		loginType = types.LoginTypeUsername
+	}
+	customAuthID, err := s.getCustomAuthIDFromProvider(user.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("invalid custom auth provider ID format: %w", err)
 	}
 	return (&types.UserLogin{
 		Namespace:      namespace,
@@ -60,13 +68,14 @@ func oauthUserToUserLogin(namespace string, user *oauth.User, password string) (
 		EmailVerified:  user.EmailVerified,
 		IsPrivateEmail: user.IsPrivateEmail,
 		IdpID:          user.UserID,
+		CustomAuthID:   customAuthID,
 	}).Normalize()
 }
 
 func newOauthLoginRedirectURL(
 	provider oauth.Provider, namespace, userType,
 	providerName, stateTokenID, invitationCode, redirectURL string,
-	appListeningPort int, logger *logrus.Entry,
+	appListeningPort int, updateStateTokenData bool, logger *logrus.Entry,
 ) (*models.RedirectURLConfig, error) {
 	config := provider.Config(namespace)
 	if config.ConfigURL == "" {
@@ -89,7 +98,9 @@ func newOauthLoginRedirectURL(
 			logger.WithError(err).Errorln("Failed to set state token data.")
 			return nil, common.ErrInternalErr
 		}
-	} else {
+		stateTokenID = stateToken.Token
+		logger.WithField("state", stateTokenID).Debugln("created oauth state")
+	} else if updateStateTokenData {
 		stateToken = &utils.OauthStateToken{Token: stateTokenID}
 		data, err := stateToken.Get()
 		if err != nil {
@@ -112,14 +123,15 @@ func newOauthLoginRedirectURL(
 			logger.WithError(err).Errorln("Failed to update state token data.")
 			return nil, common.ErrInternalErr
 		}
+		logger.WithField("state", stateTokenID).Debugln("saved oauth state")
 	}
-	logger.WithField("state", stateTokenData.Token).Debugln("saved oauth state")
-	state := stateToken.Token
+	state := stateTokenID
 	redirect, err := config.AuthCodeURL(state)
 	if err != nil {
 		logger.WithError(err).Errorln("Failed to get auth code URL")
 		return nil, common.ErrInternalErr
 	}
+	logger.WithField("redirect", redirect).Debugln("oauth login redirect url generated")
 	return &models.RedirectURLConfig{
 		EncodedRedirectURL: &redirect,
 		RedirectURI:        &config.RedirectURI,
@@ -146,6 +158,9 @@ type oauthSession struct {
 	login       *types.UserLogin
 	user        *types.User
 	logger      *logrus.Entry
+
+	// Custom OIDC email to be verified for first time adding a custom oidc login.
+	customOIDCEmail string
 }
 
 func newOauthSession(code, state string, logger *logrus.Entry) (*oauthSession, error) {
@@ -169,11 +184,14 @@ func newOauthSession(code, state string, logger *logrus.Entry) (*oauthSession, e
 		userType:    stateTokenData.UserType,
 		state:       stateTokenData,
 		redirectURL: optional.NilIfEmptyStringP(stateTokenData.RedirectURL),
-		logger:      logger.WithField(ulog.Namespace, stateTokenData.Namespace).WithField("provider", stateTokenData.Provider),
+		logger:      logger.WithField(ulog.Namespace, stateTokenData.Namespace).
+							WithField("provider", stateTokenData.Provider),
 	}, nil
 }
 
-func newOauthPasswordLoginSession(providerType, userType, namespace, username, password string, logger *logrus.Entry) (*oauthSession, error) {
+func newOauthPasswordLoginSession(
+	providerType, userType, namespace, username, password string,
+	logger *logrus.Entry) (*oauthSession, error) {
 	return &oauthSession{
 		namespace: namespace,
 		provider:  providerType,
@@ -206,6 +224,9 @@ func newOauthIDTokenLoginSession(
 		}
 		s.stateToken = stateToken
 		s.state = stateTokenData
+		if stateTokenData.Provider != "" {
+			s.provider = stateTokenData.Provider // Override provider from state token.
+		}
 	}
 	return s, nil
 }
@@ -256,10 +277,80 @@ func (s *oauthSession) setTenant() error {
 	return nil
 }
 
+func (s *oauthSession) getCustomAuthIDFromProvider(provider string) (*types.ID, error) {
+	if strings.HasPrefix(provider, "custom-oidc-") {
+		provideIDStr := strings.TrimPrefix(provider, "custom-oidc-")
+		authProviderID, err := types.ParseID(provideIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid custom auth provider ID format: %w", err)
+		}
+		return &authProviderID, nil
+	}
+	if strings.HasPrefix(provider, "custom-add-oidc-") {
+		providerString := strings.TrimPrefix(provider, "custom-add-oidc-")
+		provider := types.AuthProvider{}
+		err := json.Unmarshal([]byte(providerString), &provider)
+		if err != nil {
+			return nil, fmt.Errorf("invalid custom auth provider format: %w", err)
+		}
+		err = provider.Validate()
+		if err != nil {
+			return nil, fmt.Errorf("invalid custom auth provider data: %w", err)
+		}
+		// Add the new custom auth provider.
+		// Allow update to existing if the name already exists.
+		err = db.CreateAuthProvider(&provider)
+		if err != nil {
+			if !errors.Is(err, db.ErrAuthProviderExists) {
+				return nil, fmt.Errorf("failed to create custom auth provider: %w", err)
+			}
+			existingProvider, err := db.GetAuthProviderByDomain(s.namespace, provider.Domain)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get existing custom auth provider: %w", err)
+			}
+			err = db.UpdateAuthProvider(existingProvider.ID, &provider)
+			if err != nil {
+				return nil, fmt.Errorf("failed to update existing custom auth provider: %w", err)
+			}
+			provider.ID = existingProvider.ID
+			s.logger.
+				WithField("provider_id", provider.ID).
+				WithField("domain", provider.Domain).
+				Debugln("Updated existing custom auth provider.")
+		}
+		s.customOIDCEmail = provider.AdminEmail
+		s.provider = provider.Name()
+		return &provider.ID, nil
+	}
+	return nil, nil
+}
+
 func (s *oauthSession) setOauthUser() error {
-	p, err := utils.GetAuthProvider(s.namespace, s.provider)
-	s.logger.WithError(err).Debugln("oauth login get auth provider.")
+	customAuthID, err := s.getCustomAuthIDFromProvider(s.provider)
+	log := s.logger.WithField("provider", s.provider)
+	s.logger = log
 	if err != nil {
+		log.WithError(err).Debugln("Invalid custom auth provider ID format.")
+		return err
+	}
+	var p oauth.Provider
+	if customAuthID != nil {
+		authProvider, err := db.GetAuthProviderByID(s.namespace, *customAuthID)
+		if err != nil {
+			log.WithError(err).Debugln("Custom auth provider not found.")
+			return err
+		}
+		p, err = oauth.NewOAuth(oauth.Config{
+			Provider:     s.provider,
+			ClientID:     authProvider.ClientID,
+			ClientSecret: authProvider.ClientSecret,
+			ConfigURL:    authProvider.IssuerURL,
+		})
+	} else {
+		p, err = utils.GetAuthProvider(s.namespace, s.provider)
+	}
+	if err != nil {
+		log.WithError(err).Debugln("oauth login get auth provider.")
 		return err
 	}
 	config := p.Config(s.namespace)
@@ -270,11 +361,28 @@ func (s *oauthSession) setOauthUser() error {
 		Username:   s.username,
 		Password:   s.password,
 		RawIDToken: s.rawIDToken,
-		Logger:     s.logger,
+		Logger:     log,
 	})
-	s.logger.WithError(err).Debugln("oauth login set user.")
+	log.WithError(err).Debugln("oauth login set user.")
 	if err != nil {
 		return err
+	}
+	if customAuthID != nil && s.customOIDCEmail != "" {
+		// For first time login with custom OIDC, verify that the email matches.
+		if !strings.EqualFold(user.Email, s.customOIDCEmail) {
+			log.WithField("email", user.Email).
+				WithField("expected_email", s.customOIDCEmail).
+				Debugln("Custom OIDC email does not match expected email.")
+			// Delete the created auth provider since the login failed.
+			err = db.DeleteAuthProviders("", []types.ID{*customAuthID})
+			if err != nil {
+				log.WithError(err).
+					WithField("auth_provider_id", *customAuthID).
+					Errorln("Failed to delete custom auth provider after email mismatch.")
+			}
+			return fmt.Errorf("custom oidc email '%v' does not match expected email '%v'",
+				user.Email, s.customOIDCEmail)
+		}
 	}
 
 	s.oauthUser = user
@@ -320,7 +428,7 @@ func (s *oauthSession) setUser() (*models.ApprovalState, error) {
 		}
 	}
 
-	login, err := oauthUserToUserLogin(namespace, s.oauthUser, s.password)
+	login, err := s.oauthUserToUserLogin(namespace, s.oauthUser, s.password)
 	if err != nil {
 		s.logger.WithError(err).Debugln("Failed to convert to user login")
 		return nil, err
@@ -441,14 +549,6 @@ func (s *oauthSession) doLogin() (loginSuccess *models.LoginSuccess, redirect *m
 	if s.state == nil {
 		return
 	}
-	//s.logger.WithField("state", s.state.Token).Debugln("Set state token data with user token.")
-	//s.state.Namespace = s.namespace
-	//s.state.UserToken = &s.tokenData.Token // Don't set user token until confirmed by user.
-	//err = s.stateToken.Update(s.state, time.Duration(0))
-	//if err != nil {
-	//	s.logger.WithError(err).Errorln("Failed to update state token data.")
-	//	return nil, nil, nil, err
-	//}
 	redirect, err = s.newRedirectURLConfig(cookie)
 	if err != nil {
 		s.logger.WithError(err).Errorln("Failed to generate found redirect url")

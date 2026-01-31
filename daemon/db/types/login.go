@@ -7,8 +7,10 @@ import (
 	"cylonix/sase/api/v2/models"
 	"cylonix/sase/pkg/optional"
 	"fmt"
+	"net/url"
 	"strings"
 
+	"github.com/cylonix/utils"
 	pw "github.com/cylonix/utils/password"
 )
 
@@ -50,6 +52,8 @@ func (t LoginType) ToModel() models.LoginType {
 		return models.LoginTypeUsername
 	case LoginTypeWeChat:
 		return models.LoginTypeWechat
+	case LoginTypeCustomOIDC:
+		return models.LoginTypeCustomOidc
 	}
 	return models.LoginTypeUnknown
 }
@@ -67,23 +71,26 @@ func (t LoginType) Provider() string {
 		return "keycloak"
 	case LoginTypeWeChat:
 		return "wechat"
+	case LoginTypeCustomOIDC:
+		return "custom_oidc"
 	}
 	return ""
 }
 
 var (
-	LoginTypeAccessKey = LoginType(models.LoginTypeAccessKey)
-	LoginTypeUsername  = LoginType(models.LoginTypeUsername)
-	LoginTypePhone     = LoginType(models.LoginTypePhone)
-	LoginTypeWeChat    = LoginType(models.LoginTypeWechat)
-	LoginTypeEmail     = LoginType(models.LoginTypeEmail) // email as username login.
-	LoginTypeApple     = LoginType(models.LoginTypeApple)
-	LoginTypeGithub    = LoginType(models.LoginTypeGithub)
-	LoginTypeGoogle    = LoginType(models.LoginTypeGoogle)
-	LoginTypeKeyCloak  = LoginType(models.LoginTypeKeycloak)
-	LoginTypeMicrosoft = LoginType(models.LoginTypeMicrosoft)
-	LoginTypeScan      = LoginType(models.LoginTypeScan)
-	LoginTypeUnknown   = LoginType(models.LoginTypeUnknown)
+	LoginTypeAccessKey  = LoginType(models.LoginTypeAccessKey)
+	LoginTypeUsername   = LoginType(models.LoginTypeUsername)
+	LoginTypePhone      = LoginType(models.LoginTypePhone)
+	LoginTypeWeChat     = LoginType(models.LoginTypeWechat)
+	LoginTypeEmail      = LoginType(models.LoginTypeEmail) // email as username login.
+	LoginTypeApple      = LoginType(models.LoginTypeApple)
+	LoginTypeGithub     = LoginType(models.LoginTypeGithub)
+	LoginTypeGoogle     = LoginType(models.LoginTypeGoogle)
+	LoginTypeKeyCloak   = LoginType(models.LoginTypeKeycloak)
+	LoginTypeMicrosoft  = LoginType(models.LoginTypeMicrosoft)
+	LoginTypeScan       = LoginType(models.LoginTypeScan)
+	LoginTypeCustomOIDC = LoginType(models.LoginTypeCustomOidc)
+	LoginTypeUnknown    = LoginType(models.LoginTypeUnknown)
 )
 
 type UserLogin struct {
@@ -101,6 +108,10 @@ type UserLogin struct {
 	Email          string    `json:"email,omitempty"`            // Email address for email login.
 	EmailVerified  bool      `json:"email_verified,omitempty"`   // If email is verified, only for email login.
 	IsPrivateEmail bool      `json:"is_private_email,omitempty"` // If email is private, e.g. Apple Sign In.
+
+	// Custom OIDC auth provider info.
+	CustomAuthID *ID           `json:"custom_auth_id,omitempty"` // If login is from a custom OIDC auth provider.
+	CustomAuth   *AuthProvider `json:"custom_auth,omitempty" gorm:"foreignKey:CustomAuthID;references:ID"`
 }
 
 func (l *UserLogin) Name() (string, LoginType) {
@@ -192,6 +203,16 @@ func ModelToLoginType(t models.LoginType) LoginType {
 		return LoginTypeUsername
 	case models.LoginTypeWechat:
 		return LoginTypeWeChat
+	case models.LoginTypeApple:
+		return LoginTypeApple
+	case models.LoginTypeGithub:
+		return LoginTypeGithub
+	case models.LoginTypeMicrosoft:
+		return LoginTypeMicrosoft
+	case models.LoginTypeAccessKey:
+		return LoginTypeAccessKey
+	case models.LoginTypeCustomOidc:
+		return LoginTypeCustomOIDC
 	}
 	return LoginTypeUnknown
 }
@@ -366,4 +387,74 @@ func NewWeChatLogin(namespace, weChatID, displayName, phone, imgURL string) *Use
 		DisplayName:   displayName,
 		ProfilePicURL: imgURL,
 	}).MustNormalize()
+}
+
+type AuthProvider struct {
+	Model
+	Namespace    string
+	Domain       string `gorm:"uniqueIndex:domain"`
+	AdminEmail   string // must be in the domain
+	WebFingerURL string // must be in the domain
+	IssuerURL    string
+	Provider     string // optional, e.g., keycloak
+	ClientID     string
+	ClientSecret string
+	Scopes       string // comma separated scopes, optional
+}
+
+func (a *AuthProvider) Validate() error {
+	if a.AdminEmail == "" {
+		return fmt.Errorf("admin email cannot be empty")
+	}
+	if a.WebFingerURL == "" {
+		return fmt.Errorf("web finger URL cannot be empty")
+	}
+	if a.IssuerURL == "" {
+		return fmt.Errorf("issuer URL cannot be empty")
+	}
+	if a.ClientID == "" {
+		return fmt.Errorf("client ID cannot be empty")
+	}
+	if a.ClientSecret == "" {
+		return fmt.Errorf("client secret cannot be empty")
+	}
+	parts := strings.SplitN(a.AdminEmail, "@", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("admin email must be a valid email address")
+	}
+	if !strings.EqualFold(a.Domain, parts[1]) {
+		return fmt.Errorf("admin email domain does not match auth provider domain")
+	}
+	u, err := url.Parse(a.WebFingerURL)
+	if err != nil {
+		return fmt.Errorf("web finger URL is not valid: %w", err)
+	}
+	if !strings.EqualFold(a.Domain, u.Hostname()) {
+		return fmt.Errorf("admin email domain does not match web finger URL host")
+	}
+	return nil
+}
+
+func (a *AuthProvider) Name() string {
+	return fmt.Sprintf("custom-oidc-%s", a.ID.String())
+}
+
+func (a *AuthProvider) ToModel() *models.OauthProvider {
+	if a == nil {
+		return nil
+	}
+	return &models.OauthProvider{
+		ID:           a.ID.UUIDP(),
+		Namespace:    &a.Namespace,
+		Domain:       a.Domain,
+		AdminEmail:   a.AdminEmail,
+		WebFingerURL: a.WebFingerURL,
+		IssuerURL:    &a.IssuerURL,
+		Provider:     &a.Provider,
+		ClientID:     a.ClientID,
+		ClientSecret: utils.ShortStringNWithEllipsis(a.ClientSecret, 10),
+		Scopes:       &a.Scopes,
+		CreatedAt:    optional.P(a.CreatedAt.Unix()),
+		UpdatedAt:    optional.P(a.UpdatedAt.Unix()),
+	}
 }

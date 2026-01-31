@@ -173,6 +173,19 @@ var (
 			},
 			Rollback: func(db *gorm.DB) error { return nil },
 		},
+		{
+			ID: "202601220900",
+			Migrate: func(tx *gorm.DB) error {
+				log.Printf(`
+					Migrating to add custom oidc auth support.
+				`)
+				return tx.AutoMigrate(
+					&types.UserLogin{},
+					&types.AuthProvider{},
+				)
+			},
+			Rollback: func(db *gorm.DB) error { return nil },
+		},
 	}
 )
 

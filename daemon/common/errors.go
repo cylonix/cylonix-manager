@@ -116,3 +116,15 @@ func (e BadParamsErr) ToString() string {
 func NewBadParamsErr(err error) BadParamsErr {
 	return BadParamsErr{err: err}
 }
+
+type ConflictErr struct {
+	err error
+}
+
+func (e ConflictErr) Error() string {
+	return e.err.Error()
+}
+
+func NewConflictErr(err error) *ConflictErr {
+	return &ConflictErr{err: err}
+}

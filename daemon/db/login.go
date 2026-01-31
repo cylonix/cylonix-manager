@@ -24,6 +24,8 @@ var (
 	ErrInvalidPasswordHistory  = errors.New("invalid password history")
 	ErrSamePassword            = errors.New("password is the same")
 	ErrSamePhone               = errors.New("phone is the same")
+	ErrAuthProviderNotExists   = errors.New("auth provider does not exist")
+	ErrAuthProviderExists      = errors.New("auth provider already exists")
 )
 
 // UpdateLoginUsernamePassword updates the login username and/or password.
@@ -189,11 +191,17 @@ func getUserLogin(namespace string, loginID types.LoginID, result interface{}) e
 // Namespace is optional.
 func getUserLoginByLoginName(namespace, loginName string, result interface{}) error {
 	var err error
-	if namespace == "" {
-		err = postgres.SelectFirst(result, "login_name = ?", loginName)
-	} else {
-		err = postgres.SelectFirst(result, "namespace = ? and login_name = ?", namespace, loginName)
+	tx, err := getPGconn()
+	if err != nil {
+		return err
 	}
+	tx = tx.Model(&types.UserLogin{})
+	tx = tx.Where("login_name = ?", loginName)
+	if namespace != "" {
+		tx = tx.Where("namespace = ?", namespace)
+	}
+	tx = tx.Preload("CustomAuth")
+	err = tx.First(result).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrUserLoginNotExists
@@ -582,4 +590,133 @@ func GetLoginsByLoginNameLike(namespace *string, loginName string) ([]*types.Use
 		return nil, err
 	}
 	return result, nil
+}
+
+func normalizeAuthProviderDomain(domain string) string {
+	domain = strings.TrimSpace(domain)
+	domain = strings.ToLower(domain)
+	return domain
+}
+
+func GetAuthProviderByDomain(namespace, domain string) (*types.AuthProvider, error) {
+	ret := &types.AuthProvider{}
+	namespace = types.NormalizeNamespace(namespace)
+	domain = normalizeAuthProviderDomain(domain)
+	err := postgres.SelectFirst(ret, "domain = ?", domain)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAuthProviderNotExists
+		}
+		return nil, err
+	}
+	if namespace != "" && ret.Namespace != namespace {
+		return nil, ErrNamespaceMismatch
+	}
+	return ret, nil
+}
+
+func CreateAuthProvider(ap *types.AuthProvider) error {
+	if ap.Namespace == "" || ap.Domain == "" {
+		return ErrBadParams
+	}
+	ap.Domain = normalizeAuthProviderDomain(ap.Domain)
+	existing, err := GetAuthProviderByDomain(ap.Namespace, ap.Domain)
+	if err == nil && existing != nil {
+		return ErrAuthProviderExists
+	}
+	if err != nil && err != ErrAuthProviderNotExists {
+		return err
+	}
+	if err := ap.Model.SetIDIfNil(); err != nil {
+		return err
+	}
+	if err := postgres.Create(ap); err != nil {
+		return err
+	}
+	return nil
+}
+
+func UpdateAuthProvider(id types.ID, ap *types.AuthProvider) error {
+	if id == types.NilID {
+		return ErrBadParams
+	}
+
+	// Only update allowed fields
+	// Empty fields will not be updated
+	update := types.AuthProvider{
+		IssuerURL:    ap.IssuerURL,
+		WebFingerURL: ap.WebFingerURL,
+		Provider:     ap.Provider,
+		Scopes:       ap.Scopes,
+		AdminEmail:   ap.AdminEmail,
+		ClientID:     ap.ClientID,
+		ClientSecret: ap.ClientSecret,
+	}
+	pg, err := getPGconn()
+	if err != nil {
+		return err
+	}
+	if err := pg.Model(&types.AuthProvider{}).
+		Where("id = ?", ap.ID).Updates(update).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetAuthProviderByID(namespace string, authProviderID types.ID) (*types.AuthProvider, error) {
+	ret := &types.AuthProvider{}
+	err := postgres.SelectFirst(ret, "id = ?", authProviderID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAuthProviderNotExists
+		}
+		return nil, err
+	}
+	if namespace != "" && ret.Namespace != namespace {
+		return nil, ErrNamespaceMismatch
+	}
+	return ret, nil
+}
+
+func DeleteAuthProviders(namespace string, authProviderIDs []types.ID) error {
+	pg, err := getPGconn()
+	if err != nil {
+		return err
+	}
+	if namespace != "" {
+		pg = pg.Where("namespace = ?", namespace)
+	}
+	pg = pg.Where("id in ?", authProviderIDs)
+	if err := pg.Delete(&types.AuthProvider{}).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func ListAuthProviders(
+	namespace string,
+	filterBy, filterValue, sortBy, sortDesc *string, page, pageSize *int,
+) (int, []types.AuthProvider, error) {
+	pg, err := getPGconn()
+	if err != nil {
+		return 0, nil, err
+	}
+	pg = pg.Model(&types.AuthProvider{})
+	if namespace != "" {
+		pg = pg.Where("namespace = ?", namespace)
+	}
+	pg = filter(pg, filterBy, filterValue)
+	var total int64
+	err = pg.Count(&total).Error
+	if err != nil {
+		return 0, nil, err
+	}
+	var providers []types.AuthProvider
+	pg = postgres.Sort(pg, sortBy, sortDesc)
+	pg = postgres.Page(pg, total, page, pageSize)
+	err = pg.Find(&providers).Error
+	if err != nil {
+		return 0, nil, err
+	}
+	return int(total), providers, nil
 }

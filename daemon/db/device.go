@@ -9,6 +9,7 @@ import (
 	"cylonix/sase/pkg/optional"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cylonix/utils/postgres"
@@ -140,10 +141,10 @@ func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
 	}
 	db := pg.Model(&types.Device{})
 	if namespace != nil {
-		db = db.Where("namespace = ?", *namespace)
+		db = db.Where("devices.namespace = ?", *namespace)
 	}
 	if len(userIDs) > 0 {
-		db = db.Where("user_id IN ?", userIDs)
+		db = db.Where("devices.user_id IN ?", userIDs)
 	}
 	if capability != nil && *capability != "" {
 		cid := []types.DeviceID{}
@@ -158,7 +159,7 @@ func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
 		db = db.Where("device_id in ?", cid)
 	}
 	if onlineOnly {
-		db = db.Where("last_seen > ?", time.Now().Unix()-180)
+		db = db.Where("devices.last_seen > ?", time.Now().Unix()-180)
 	}
 	db = filter(db, filterBy, filterValue)
 
@@ -168,8 +169,51 @@ func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
 	}
 
 	ret := []types.Device{}
-	db = postgres.Sort(db, sortBy, sortDesc)
+
+	// Handle sorting by WgInfo fields
+	// If sorting by WgInfo fields, we need to join the wg_infos table
+	needsWgJoin := false
+	mappedSortBy := sortBy
+	if sortBy != nil && *sortBy != "" {
+		// Create a copy to avoid modifying the original
+		sortByValue := *sortBy
+		sortFields := strings.Split(sortByValue, ",")
+		for _, field := range sortFields {
+			// Check if this is a WgInfo field
+			switch field {
+			case "wg_ip", "wg_addresses", "ip":
+				// Map to the actual column name in wg_infos table
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.addresses", 1)
+				needsWgJoin = true
+			case "wg_public_key", "public_key":
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.public_key_hex", 1)
+				needsWgJoin = true
+			case "wg_name", "wireguard_name":
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.name", 1)
+				needsWgJoin = true
+			case "wg_last_seen":
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.last_seen", 1)
+				needsWgJoin = true
+			case "wg_rx_bytes", "rx_bytes":
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.rx_bytes", 1)
+				needsWgJoin = true
+			case "wg_tx_bytes", "tx_bytes":
+				sortByValue = strings.Replace(sortByValue, field, "wg_infos.tx_bytes", 1)
+				needsWgJoin = true
+			}
+		}
+		mappedSortBy = &sortByValue
+	}
+
+	db = postgres.Sort(db, mappedSortBy, sortDesc)
 	db = postgres.Page(db, total, page, pageSize)
+
+	// Add LEFT JOIN if we're sorting by WgInfo fields
+	// This must be added after Sort/Page to avoid being overridden
+	if needsWgJoin {
+		db = db.Joins("LEFT JOIN wg_infos ON wg_infos.device_id = devices.id")
+	}
+
 	db = db.
 		Preload("Labels").
 		Preload("User").
