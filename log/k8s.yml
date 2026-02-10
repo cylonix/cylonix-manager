@@ -1,0 +1,40 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: log-collector
+  namespace: controller
+  labels:
+    app: log-collector
+spec:
+  nodeSelector:
+    manage-daemon: ""
+  containers:
+  - name: log-collector
+    image: cylonix/log-collector:v1.0.0
+    env:
+      - name: PORT
+        value: "9090"
+      - name: DATA_DIR
+        value: "/data"
+    volumeMounts:
+      - mountPath: /data
+        name: log-data
+  volumes:
+    - name: log-data
+      hostPath:
+        path: /var/lib/cylonix/log/data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: controller
+  name: log-collector-service
+spec:
+  selector:
+    app: log-collector
+  ports:
+    - protocol: TCP
+      name: http
+      port: 9090
+      targetPort: 9090

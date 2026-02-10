@@ -1,0 +1,13 @@
+services:
+  log-collector:
+    build:
+      context: ..
+      dockerfile: log/Dockerfile
+    image: cylonix-log-collector:local
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data

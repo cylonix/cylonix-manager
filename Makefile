@@ -80,7 +80,7 @@ test:
 	rm -f ./*/test.db ./*/*/test.db
 
 .PHONY: alpine docker
-RELEASE?=v1.0.8
+RELEASE?=v1.0.9
 VERSION:=$(shell git describe --tags --exact-match 2> /dev/null || \
 				git rev-parse --short HEAD || echo "unknown")
 REVISION:=$(shell git rev-parse HEAD)
@@ -101,5 +101,16 @@ alpine:
 		--build-arg VERSION_LONG=${VERSION} \
 		--build-arg VERSION_SHORT=${RELEASE} \
 		--build-arg VERSION_GIT_HASH=${GIT_HASH} \
+		--build-arg GOPROXY=${GOPROXY} \
+		.
+
+LOG_COLLECTOR_VERSION?=v1.0.0
+log-collector:
+	$(DOT_CLEAN)
+	DOCKER_DEFAULT_PLATFORM="linux/amd64" docker build \
+		--network host \
+		-f log/Dockerfile \
+		--tag cylonix/log-collector:$(LOG_COLLECTOR_VERSION) \
+		--tag cylonix/log-collector:latest \
 		--build-arg GOPROXY=${GOPROXY} \
 		.
