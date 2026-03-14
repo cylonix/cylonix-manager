@@ -313,6 +313,17 @@ func (n *NodeHandler) AuthURL(node *hstypes.Node, current string) (string, error
 				return "", fmt.Errorf("node %v already authenticated", node.NodeKey)
 			}
 			// Token exists but not authenticated. Return the auth URL.
+			// Make sure machine key matches but OK to update the node key.
+			if node.NodeKey.String() != stateTokenData.NodeKey {
+				if node.MachineKey.String() != stateTokenData.MachineKey {
+					return "", fmt.Errorf("node key and machine key mismatch with existing auth URL")
+				}
+				// Update the auth URL with the new node key.
+				stateTokenData.NodeKey = node.NodeKey.String()
+				if err := utils.UpdateOauthStateTokenData(tokenID, stateTokenData); err != nil {
+					return "", fmt.Errorf("failed to update oauth state token data: %w", err)
+				}
+			}
 			return current, nil
 		}
 	}
