@@ -1,0 +1,125 @@
+name: Build Cylonix Manager Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix-auth-key-issue
+
+jobs:
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      GO_VERSION: "1.25.6"
+      OPENAPI_GENERATOR_IMAGE: cylonix/openapi-generator-cli:v7.8.5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install oapi-codegen
+        run: go install github.com/cylonix/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+      - name: Generate manager API code
+        run: |
+          rm -rf api/v2
+          mkdir -p api/v2/models
+          "$HOME/go/bin/oapi-codegen" --config=api/server.cfg.yaml submodules/openapi/manager/openapi-3.0.yaml
+          "$HOME/go/bin/oapi-codegen" --config=api/model.cfg.yaml submodules/openapi/manager/openapi-3.0.yaml
+
+      - name: Generate client code
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          generate_client() {
+            local input_path=$1
+            local output_dir=$2
+            local package_name=$3
+            local package_version=$4
+
+            rm -rf "$output_dir"
+            mkdir -p "$output_dir"
+
+            docker run --rm \
+              -v "${PWD}:/local" \
+              "${OPENAPI_GENERATOR_IMAGE}" \
+              generate \
+              -g go \
+              -i "/local/${input_path}" \
+              -o "/local/${output_dir}" \
+              --git-repo-id "${package_name}/v1" \
+              --git-user-id cylonix \
+              --inline-schema-options RESOLVE_INLINE_ENUMS=true \
+              --additional-properties="packageName=${package_name},packageVersion=${package_version},enumClassPrefix=true"
+
+            (
+              cd "$output_dir"
+              go mod tidy
+              go fmt ./...
+            )
+          }
+
+          generate_client submodules/openapi/fw/openapi.yaml clients/fw fw 1.0.0
+          generate_client submodules/openapi/ipdrawer/ipdrawer.yaml clients/ipdrawer ipdrawer 1.0.0
+          generate_client submodules/openapi/supervisor/openapi-2.0.yaml clients/supervisor supervisor 1.0.0
+          generate_client submodules/openapi/wg/wg.yaml clients/wg wg_agent 1.0.0
+
+      - name: Compute image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(sed -n 's/^RELEASE?=//p' Makefile)"
+          version="$(git rev-parse --short HEAD)"
+          git_hash="$(git rev-parse HEAD)"
+
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "git_hash=${git_hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 Docker image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            --network host \
+            -f docker/Dockerfile.alpine \
+            -t "cylonix/cylonix-manager:alpine-${{ steps.meta.outputs.version }}" \
+            -t "cylonix/cylonix-manager:alpine-${{ steps.meta.outputs.release }}" \
+            -t "cylonix/cylonix-manager:alpine-latest" \
+            --build-arg VERSION_LONG="${{ steps.meta.outputs.version }}" \
+            --build-arg VERSION_SHORT="${{ steps.meta.outputs.release }}" \
+            --build-arg VERSION_GIT_HASH="${{ steps.meta.outputs.git_hash }}" \
+            .
+
+      - name: Export Docker image tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          docker save "cylonix/cylonix-manager:alpine-${{ steps.meta.outputs.release }}" \
+            | gzip > "dist/cylonix-manager-alpine-${{ steps.meta.outputs.release }}-linux-amd64.tar.gz"
+          sha256sum "dist/cylonix-manager-alpine-${{ steps.meta.outputs.release }}-linux-amd64.tar.gz" \
+            > "dist/cylonix-manager-alpine-${{ steps.meta.outputs.release }}-linux-amd64.tar.gz.sha256"
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cylonix-manager-alpine-${{ steps.meta.outputs.release }}-linux-amd64
+          path: dist/*
+          if-no-files-found: error
