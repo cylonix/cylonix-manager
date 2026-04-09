@@ -56,6 +56,7 @@ jobs:
             mkdir -p "$output_dir"
 
             docker run --rm \
+              --user "$(id -u):$(id -g)" \
               -v "${PWD}:/local" \
               "${OPENAPI_GENERATOR_IMAGE}" \
               generate \
