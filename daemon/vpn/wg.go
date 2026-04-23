@@ -307,14 +307,7 @@ func (w *wgHandlerImpl) deleteWgDevice(namespace string, deviceID types.DeviceID
 func (w *wgHandlerImpl) ListNodes(auth interface{}, requestObject api.ListWgNodesRequestObject) (total int, list []models.WgNode, err error) {
 	token, namespace, userID, logger := common.ParseToken(auth, "list-wg-nodes", "List wg nodes", w.logger)
 	if token == nil || !token.IsAdminUser {
-		user := types.User{}
-		err = db.GetUser(userID, &user)
-		if err != nil {
-			logger.WithError(err).Errorln("Failed to get user.")
-			err = common.ErrInternalErr
-			return
-		}
-		if !optional.Bool(user.GatewayEnabled) {
+		if !db.IsUserGatewayEnabled(userID) {
 			// No gateway enabled, no wg nodes.
 			return
 		}
@@ -336,6 +329,47 @@ func (w *wgHandlerImpl) ListNodes(auth interface{}, requestObject api.ListWgNode
 		return *wgNode.ToModel(), nil
 	})
 	return
+}
+
+// SetNodeAdminState administratively shuts down or brings up a wg gateway by
+// updating the admin_down flag on the supervisor's WgInstance. Only namespace
+// admins (for gateways in their own namespace) or sys admins may invoke it.
+func (w *wgHandlerImpl) SetNodeAdminState(auth interface{}, requestObject api.SetWgNodeAdminStateRequestObject) error {
+	token, namespace, _, logger := common.ParseToken(auth, "set-wg-node-admin-state", "Set wg node admin state", w.logger)
+	if token == nil || !token.IsAdminUser {
+		return common.ErrModelUnauthorized
+	}
+	if requestObject.Body == nil {
+		return errors.New("missing request body")
+	}
+	state := requestObject.Body.State
+	if state != models.WgAdminStateStateDown && state != models.WgAdminStateStateUp {
+		return fmt.Errorf("invalid state %q", state)
+	}
+	wgID, err := types.ParseID(requestObject.WgID)
+	if err != nil {
+		return fmt.Errorf("invalid wg id %q: %w", requestObject.WgID, err)
+	}
+	logger = logger.WithField("wg-id", wgID)
+	wgNode, err := db.GetWgNodeByID(wgID)
+	if err != nil {
+		if errors.Is(err, db.ErrWgNodeNotExists) {
+			return common.ErrModelUnauthorized
+		}
+		logger.WithError(err).Errorln("Failed to look up wg node.")
+		return common.ErrInternalErr
+	}
+	if wgNode.Namespace != namespace && !token.IsSysAdmin {
+		logger.Warnln("Non sys-admin trying to operate on other namespace's wg node.")
+		return common.ErrModelUnauthorized
+	}
+	down := state == models.WgAdminStateStateDown
+	if err := common.SetWgInstanceAdminDown(wgNode.Namespace, requestObject.WgID, down); err != nil {
+		logger.WithError(err).Errorln("Failed to set wg instance admin state on supervisor.")
+		return common.ErrInternalErr
+	}
+	logger.WithField("admin_down", down).Infoln("Set wg admin state.")
+	return nil
 }
 
 // Delete deletes the wg devices. Only admin can delete other user's device.

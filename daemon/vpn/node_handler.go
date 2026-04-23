@@ -421,14 +421,13 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 		return nil, err
 	}
 
-	// WgInfo not yet exists.
-	user := &types.User{}
-	if err := db.GetUser(userID, user); err != nil {
-		return nil, err
+	// WgInfo not yet exists. Check lightweight field first to avoid heavy preload.
+	if !db.IsUserWgEnabled(userID) {
+		return nil, fmt.Errorf("vpn access not enabled for this user")
 	}
 
-	if !optional.Bool(user.WgEnabled) {
-		err := fmt.Errorf("vpn access not enabled for this user")
+	user := &types.User{}
+	if err := db.GetUser(userID, user); err != nil {
 		return nil, err
 	}
 
@@ -845,12 +844,12 @@ func (n *NodeHandler) NetworkDomain(user *hstypes.User) ([]byte, error) {
 	logger := n.vpnService.logger.
 		WithField(ulog.Namespace, u.Namespace).
 		WithField(ulog.UserID, u.UserID)
-	result := &types.User{}
-	if err := db.GetUser(u.UserID, result); err != nil {
+	nd, err := db.GetUserNetworkDomain(u.UserID)
+	if err != nil {
 		logger.WithError(err).Warnln("failed to get network domain")
-		return nil, fmt.Errorf("failed to get user %v: %w", u.UserID, err)
+		return nil, err
 	}
-	return []byte(optional.V(result.NetworkDomain, "")), nil
+	return []byte(nd), nil
 }
 
 func (n *NodeHandler) RefreshToken(node *hstypes.Node) error {
@@ -886,12 +885,6 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 		log.Debugln("Exit node is the same as the current one. Skip.")
 		return nil
 	}
-	user, err := db.GetUserByID(&namespace, userID)
-	if err != nil {
-		log.WithError(err).Errorln("Failed to fetch user from the database")
-		return err
-	}
-
 	// Check node key consistency.
 	currentNodeKeyHex, err := vpnpkg.NodeKeyToHexString(node.NodeKey)
 	if err != nil {
@@ -911,7 +904,7 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 	}
 
 	if exitNodeID == "" {
-		if _, err := common.ChangeExitNode(user, wgInfo, "", nil, log); err != nil {
+		if _, err := common.ChangeExitNode(nil, wgInfo, "", nil, log); err != nil {
 			log.WithError(err).Errorln("failed to change exit node")
 			return err
 		}
@@ -938,7 +931,7 @@ func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
 			newWgName = wg.Name
 		}
 	}
-	_, err = common.ChangeExitNode(user, wgInfo, newWgName, nil, log)
+	_, err = common.ChangeExitNode(nil, wgInfo, newWgName, nil, log)
 	if err != nil {
 		log.WithError(err).Errorln("failed to change exit node")
 		return err

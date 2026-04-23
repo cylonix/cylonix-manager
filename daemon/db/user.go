@@ -149,6 +149,58 @@ func GetUserByID(namespace *string, userID types.UserID) (*types.User, error) {
 	return user, nil
 }
 
+// getUserLite queries only the users table without preloading relations.
+func getUserLite(userID types.UserID) (*types.User, error) {
+	pg, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	user := &types.User{}
+	if err = pg.First(user, "id = ?", userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotExists
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+// IsUserGatewayEnabled returns whether the user has gateway enabled.
+func IsUserGatewayEnabled(userID types.UserID) bool {
+	u, err := getUserLite(userID)
+	if err != nil {
+		return false
+	}
+	return optional.Bool(u.GatewayEnabled)
+}
+
+// IsUserWgEnabled returns whether the user has WireGuard VPN enabled.
+func IsUserWgEnabled(userID types.UserID) bool {
+	u, err := getUserLite(userID)
+	if err != nil {
+		return false
+	}
+	return optional.Bool(u.WgEnabled)
+}
+
+// GetUserMeshVpnMode returns the user's mesh VPN mode.
+func GetUserMeshVpnMode(userID types.UserID) string {
+	u, err := getUserLite(userID)
+	if err != nil {
+		return ""
+	}
+	return optional.String(u.MeshVpnMode)
+}
+
+// GetUserNetworkDomain returns the user's network domain.
+func GetUserNetworkDomain(userID types.UserID) (string, error) {
+	u, err := getUserLite(userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get network domain: %w", err)
+	}
+	return optional.V(u.NetworkDomain, ""), nil
+}
+
 func GetUserBaseInfoList(namespace string, userIDs []types.UserID) ([]types.UserBaseInfo, error) {
 	tx, err := getPGconn()
 	if err != nil {

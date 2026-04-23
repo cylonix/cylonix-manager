@@ -60,11 +60,16 @@ type ResourceInterface interface {
 	GetNamespaceResources(namespace string) (*sup.Resources, error)
 }
 
+type WgInterface interface {
+	SetInstanceAdminDown(instanceID string, down bool) error
+}
+
 type ApiClient struct {
 	Policy   PolicyInterface
 	Pops     PopsInterface
 	Route    RouteInterface
 	Resource ResourceInterface
+	Wg       WgInterface
 }
 
 const (
@@ -127,6 +132,16 @@ func RefreshDiversionPolicy(namespace string, policyID types.PolicyID, delete bo
 		return errSupervisorServiceNotReady
 	}
 	return supervisorInstance.RefreshDiversionPolicy(namespace, policyID, delete)
+}
+
+// SetWgInstanceAdminDown sets the admin-down state on a wg gateway via the
+// supervisor. Namespace is used only for logging/scoping; authorization has
+// already been checked at the handler layer.
+func SetWgInstanceAdminDown(namespace, instanceID string, down bool) error {
+	if supervisorInstance == nil {
+		return errSupervisorServiceNotReady
+	}
+	return supervisorInstance.SetWgInstanceAdminDown(namespace, instanceID, down)
 }
 func (s *SupervisorService) SetAPIClient(client *ApiClient) {
 	s.apiClient = client
@@ -240,6 +255,7 @@ func (s *SupervisorService) newProxyAPIClient(resourceType string, uuid string) 
 		Pops:     supClient,
 		Route:    supClient,
 		Resource: supClient,
+		Wg:       supClient,
 	}
 	s.logger.Infof("Init client for %s/%s", resourceType, uuid)
 
@@ -292,6 +308,16 @@ func (s *supervisorClient) GetNamespaceResources(namespace string) (*sup.Resourc
 	req := s.client.ResourceAPI.GetNamespaceResources(ctx, namespace)
 	resources, _, err := req.Execute()
 	return resources, err
+}
+
+func (s *supervisorClient) SetInstanceAdminDown(instanceID string, down bool) error {
+	ctx := s.newContext()
+	body := sup.WgInstanceModify{}
+	body.SetAdminDown(down)
+	body.SetAdminDownSet(true)
+	req := s.client.WgAPI.UpdateWgInstance(ctx, instanceID).WgInstance(body)
+	_, err := req.Execute()
+	return err
 }
 
 var warnSupervisorEmptyAPIKeyCount = 0
@@ -406,6 +432,24 @@ func (s *SupervisorService) AddAppRoute(namespace, wgName string, ipList []strin
 	}
 
 	log.Infoln("Added app route successfully.")
+	return nil
+}
+
+func (s *SupervisorService) SetWgInstanceAdminDown(namespace, instanceID string, down bool) error {
+	if ready, err := s.IsApiReady(); !ready {
+		return err
+	}
+	log := s.logger.WithFields(logrus.Fields{
+		ulog.Handle:    "set-wg-admin-down",
+		ulog.Namespace: namespace,
+		"wg-id":        instanceID,
+		"admin_down":   down,
+	})
+	if err := s.apiClient.Wg.SetInstanceAdminDown(instanceID, down); err != nil {
+		log.WithError(err).Errorln("Failed to set wg admin-down on supervisor")
+		return err
+	}
+	log.Infoln("Set wg admin-down successfully.")
 	return nil
 }
 
@@ -705,11 +749,7 @@ func IsGatewaySupported(namespace string, user *types.User, userID types.UserID,
 		return true
 	}
 	if user == nil {
-		u, err := db.GetUserByID(&namespace, userID)
-		if err != nil {
-			return false
-		}
-		user = u
+		return db.IsUserGatewayEnabled(userID)
 	}
 	return optional.Bool(user.GatewayEnabled)
 }

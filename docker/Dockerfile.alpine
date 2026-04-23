@@ -33,9 +33,8 @@ ARG TARGETARCH
 
 ENV GOCACHE=/tmp/go-cache
 
-# Limit parallel compilation to avoid memory issues
 # CGO_ENABLED=0 ensures the final binary works on Alpine
-RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go install -p 1 -ldflags="\
+RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go install -ldflags="\
     -X cylonix.io/version.longStamp=$VERSION_LONG \
     -X cylonix.io/version.shortStamp=$VERSION_SHORT \
     -X cylonix.io/version.gitCommitStamp=$VERSION_GIT_HASH" \

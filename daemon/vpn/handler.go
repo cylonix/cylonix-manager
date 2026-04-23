@@ -45,6 +45,7 @@ type wgHandler interface {
 	Delete(auth interface{}, requestObject api.DeleteVpnDevicesRequestObject) error
 	ListNodes(auth interface{}, requestObject api.ListWgNodesRequestObject) (int, []models.WgNode, error)
 	DeleteNodes(auth interface{}, requestObject api.DeleteWgNodesRequestObject) error
+	SetNodeAdminState(auth interface{}, requestObject api.SetWgNodeAdminStateRequestObject) error
 }
 
 func NewService(daemon interfaces.DaemonInterface, fwService fwconfig.ConfigService, logger *logrus.Entry) *VpnService {
@@ -65,6 +66,7 @@ func (s *VpnService) Register(d *api.StrictServer) error {
 	d.DeleteVpnDevicesHandler = s.deleteDevices
 	d.ListWgNodesHandler = s.listWgNodes
 	d.DeleteWgNodesHandler = s.deleteWgNodes
+	d.SetWgNodeAdminStateHandler = s.setWgNodeAdminState
 	return nil
 }
 func (s *VpnService) Logger() *logrus.Entry {
@@ -126,14 +128,8 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		log.WithError(err).Errorln("update device last seen failed")
 	}
 
-	user, err := db.GetUserByID(&namespace, userID)
-	if err != nil {
-		log.WithError(err).Errorln("user not found")
-		return nil, nil, err
-	}
-
 	peers, onlinePeers := []uint64{}, []uint64{}
-	if common.IsGatewaySupported(namespace, user, userID, deviceID) {
+	if common.IsGatewaySupported(namespace, nil, userID, deviceID) {
 		wgPeers, onlineWgs, err := s.getWgGatewayPeers(m)
 		if err != nil {
 			return nil, nil, err
@@ -142,7 +138,8 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 		peers = append(peers, wgPeers...)
 		onlinePeers = onlineWgs
 	}
-	list, err := s.getApprovedPeers(namespace, userID, user, deviceID, log)
+	meshVpnMode := db.GetUserMeshVpnMode(userID)
+	list, err := s.getApprovedPeers(namespace, userID, meshVpnMode, deviceID, log)
 	if err != nil {
 		log.WithError(err).Errorln("Failed to list approved peers")
 		return nil, nil, err
@@ -161,12 +158,12 @@ func (s *VpnService) Peers(m *types.WgInfo) ([]uint64, []uint64, error) {
 func (s *VpnService) getApprovedPeers(
 	namespace string,
 	userID types.UserID,
-	user *types.User,
+	meshVpnMode string,
 	deviceID types.DeviceID,
 	logger *logrus.Entry,
 ) ([]uint64, error) {
 	log := logger.WithField(ulog.SubHandle, "get-approved-peers").WithField(ulog.DeviceID, deviceID)
-	mode := optional.String(user.MeshVpnMode)
+	mode := meshVpnMode
 	if mode == "" {
 		mode = s.daemon.DefaultMeshMode(namespace, log)
 	}
@@ -256,16 +253,11 @@ func (s *VpnService) RotateNodeKeyInGateway(
 		return nil
 	}
 
-	user, err := db.GetUserByID(&namespace, userID)
-	if err != nil {
-		logger.WithError(err).Errorln("Failed to fetch user from the database")
-		return err
-	}
-	if !common.IsGatewaySupported(m.Namespace, user, userID, m.DeviceID) {
+	if !common.IsGatewaySupported(m.Namespace, nil, userID, m.DeviceID) {
 		return nil
 	}
 	m.PublicKeyHex = nodeKeyHex
-	if err = common.WgUpdateDevicePublicKey(m.ToModel()); err != nil {
+	if err := common.WgUpdateDevicePublicKey(m.ToModel()); err != nil {
 		log := logger.WithField(ulog.WgName, m.WgName)
 		log.WithError(err).Errorln("Failed to update new key to wg client.")
 		if errors.Is(err, common.ErrWgClientOffline) ||
@@ -414,6 +406,23 @@ func (s *VpnService) deleteWgNodes(ctx context.Context, requestObject api.Delete
 	}, nil
 }
 
+func (s *VpnService) setWgNodeAdminState(ctx context.Context, requestObject api.SetWgNodeAdminStateRequestObject) (api.SetWgNodeAdminStateResponseObject, error) {
+	auth := ctx.Value(api.SecurityAuthContextKey)
+	err := s.wgHandler.SetNodeAdminState(auth, requestObject)
+	if err == nil {
+		return api.SetWgNodeAdminState200Response{}, nil
+	}
+	if errors.Is(err, common.ErrInternalErr) {
+		return api.SetWgNodeAdminState500JSONResponse{}, nil
+	}
+	if errors.Is(err, common.ErrModelUnauthorized) {
+		return api.SetWgNodeAdminState401Response{}, nil
+	}
+	return api.SetWgNodeAdminState400JSONResponse{
+		BadRequestJSONResponse: common.NewBadRequestJSONResponse(err),
+	}, nil
+}
+
 func (s *VpnService) NewDevice(
 	namespace string, userID types.UserID, nodeID *uint64,
 	machineKey, nodeKeyHex, wgName, os, hostname string, IsWireGuardOnly bool,
@@ -437,15 +446,9 @@ func (s *VpnService) NewDevice(
 	}
 
 	var user *types.User
-	user, err = db.GetUserByID(&namespace, userID)
-	if err != nil {
-		log.WithError(err).Errorln("Failed to get user from db")
-		return
-	}
-
 	wgID := ""
 	if wgName != "" {
-		if common.IsGatewaySupported(namespace, user, userID, types.NilID) {
+		if common.IsGatewaySupported(namespace, nil, userID, types.NilID) {
 			wgClient, newErr := common.GetAccessPoint(namespace, wgName, lat, lng)
 			if wgClient == nil || newErr != nil {
 				err = fmt.Errorf("failed to get wg: %w", newErr)

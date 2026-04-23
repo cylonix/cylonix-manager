@@ -10,11 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylonix/utils/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+)
+
+var (
+	lastSeenMu    sync.Mutex
+	lastSeenCache = make(map[types.DeviceID]int64)
 )
 
 func AddUserDevice(namespace string, userID types.UserID, device *types.Device) error {
@@ -704,7 +710,18 @@ func GetWgInfoListByUserIDFast(namespace string, userID types.UserID) ([]types.W
 	}
 	return ret, nil
 }
+const lastSeenThrottle = 60 // seconds
+
 func UpdateDeviceLastSeen(namespace string, userID types.UserID, deviceID types.DeviceID, lastSeen int64) error {
+	// Throttle: skip DB update if we updated this device within the last 60s.
+	lastSeenMu.Lock()
+	if prev, ok := lastSeenCache[deviceID]; ok && lastSeen-prev < lastSeenThrottle {
+		lastSeenMu.Unlock()
+		return nil
+	}
+	lastSeenCache[deviceID] = lastSeen
+	lastSeenMu.Unlock()
+
 	pg, err := postgres.Connect()
 	if err != nil {
 		return err
