@@ -42,10 +42,22 @@ const (
 )
 
 var (
-	headscale   *hscontrol.Headscale
-	hsConfig    *hstypes.Config
-	hsLocalGrpc *HsLocalGrpc
+	headscale       *hscontrol.Headscale
+	hsConfig        *hstypes.Config
+	hsLocalGrpc     *HsLocalGrpc
+	headscaleForTest bool
 )
+
+// SetHeadscaleForTest marks the headscale service as initialized for test
+// purposes. When true, the nil-check short-circuit in the exported wrapper
+// functions is bypassed. Pair with SetHsClient to plug in a fake client.
+func SetHeadscaleForTest(on bool) {
+	headscaleForTest = on
+}
+
+func headscaleReady() bool {
+	return headscale != nil || headscaleForTest
+}
 
 func Run(nodeHandler hstypes.NodeHandler, logger *logrus.Entry) error {
 	return runHeadscale(nodeHandler, logger)
@@ -76,6 +88,17 @@ func runHeadscale(nodeHandler hstypes.NodeHandler, logger *logrus.Entry) error {
 	}()
 
 	return nil
+}
+
+// SetHsClient lets tests inject a fake HeadscaleServiceClient so the vpn
+// package can be exercised without a real headscale process. Pass nil to
+// reset back to the lazy-init CLI-backed client.
+func SetHsClient(client v1.HeadscaleServiceClient) {
+	if client == nil {
+		hsLocalGrpc = nil
+		return
+	}
+	hsLocalGrpc = &HsLocalGrpc{client: client}
 }
 
 func getHsClient() v1.HeadscaleServiceClient {
@@ -152,7 +175,7 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 }
 
 func DeleteHsUser(namespace, network string, userID types.UserID) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -174,7 +197,7 @@ func DeleteHsUser(namespace, network string, userID types.UserID) error {
 }
 
 func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*string, error) {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil, nil
 		}
@@ -204,7 +227,7 @@ func CreatePreAuthKey(userInfo *UserInfo, description string, ip *string) (*stri
 }
 
 func CreateApiKey(token *utils.UserTokenData, isNetworkAdmin bool) (*string, error) {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil, nil
 		}
@@ -254,7 +277,7 @@ func CreateApiKey(token *utils.UserTokenData, isNetworkAdmin bool) (*string, err
 }
 
 func RefreshApiKey(prefix string) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -271,7 +294,7 @@ func RefreshApiKey(prefix string) error {
 }
 
 func GetPreAuthKey(namespace string, id uint64) (*v1.PreAuthKey, error) {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil, nil
 		}
@@ -296,7 +319,7 @@ func GetPreAuthKey(namespace string, id uint64) (*v1.PreAuthKey, error) {
 }
 
 func DeleteNode(nodeID uint64) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -317,7 +340,7 @@ func DeleteNode(nodeID uint64) error {
 
 // GetNode returns nil if node does not exist.
 func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, error) {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil, nil
 		}
@@ -351,7 +374,7 @@ func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, 
 }
 
 func CreateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*uint64, error) {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil, nil
 		}
@@ -444,7 +467,7 @@ func wgNodeToProtoNode(su *types.UserBaseInfo, wgNode *types.WgNode) (*v1.Node, 
 }
 
 func UpdateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -468,7 +491,7 @@ func UpdateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) error {
 }
 
 func UpdateNodeCapabilities(namespace string, nodeID uint64, addCapabilities, delCapabilities []string) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -488,7 +511,7 @@ func UpdateNodeCapabilities(namespace string, nodeID uint64, addCapabilities, de
 }
 
 func UpdateUserNetworkDomain(namespace string, userID types.UserID, networkDomain string) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -507,7 +530,7 @@ func UpdateUserNetworkDomain(namespace string, userID types.UserID, networkDomai
 }
 
 func UpdateUserPeers(namespace string, userID types.UserID) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
@@ -525,7 +548,7 @@ func UpdateUserPeers(namespace string, userID types.UserID) error {
 }
 
 func AddDelShareToUser(nodeID uint64, namespace, username string, add bool) error {
-	if headscale == nil {
+	if !headscaleReady() {
 		if ignoreHeadscaleInitError {
 			return nil
 		}
