@@ -38,3 +38,4 @@ clients/supervisor
 
 .DS_STORE
 cylonix-manager
+.claude/

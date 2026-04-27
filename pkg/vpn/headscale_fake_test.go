@@ -132,7 +132,7 @@ func TestGetNode_WithFake(t *testing.T) {
 			MachineKey: "mkey:" + hexKey(),
 			NodeKey:    "nodekey:" + hexKey(),
 			DiscoKey:   "discokey:" + hexKey(),
-			User:       &v1.User{Id: "1", Name: id.String(), Namespace: "ns"},
+			User:       &v1.User{Id: 1, Name: id.String(), Namespace: "ns"},
 		})
 	}, func() {
 		// ParseProtoNode may reject if other required fields are missing;

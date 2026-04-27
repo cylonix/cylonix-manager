@@ -57,8 +57,8 @@ func (c *Client) SeedUser(u *v1.User) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ensureInit()
-	if u.Id == "" {
-		u.Id = "1"
+	if u.Id == 0 {
+		u.Id = 1
 	}
 	c.users[u.Name] = u
 }
@@ -95,7 +95,7 @@ func (c *Client) CreateUser(ctx context.Context, in *v1.CreateUserRequest, _ ...
 	defer c.mu.Unlock()
 	c.ensureInit()
 	u := &v1.User{
-		Id:        "1",
+		Id:        1,
 		Name:      in.Name,
 		LoginName: strVal(in.LoginName),
 		Namespace: strVal(in.Namespace),
@@ -130,7 +130,9 @@ func (c *Client) DeleteUser(ctx context.Context, in *v1.DeleteUserRequest, _ ...
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ensureInit()
-	delete(c.users, in.Name)
+	if in.Name != nil {
+		delete(c.users, *in.Name)
+	}
 	return &v1.DeleteUserResponse{}, nil
 }
 
@@ -169,7 +171,7 @@ func (c *Client) CreatePreAuthKey(ctx context.Context, in *v1.CreatePreAuthKeyRe
 	defer c.mu.Unlock()
 	k := &v1.PreAuthKey{
 		Key:        "fake-preauthkey",
-		User:       in.User,
+		User:       &v1.User{Name: in.User},
 		Expiration: in.Expiration,
 	}
 	c.preKeys = append(c.preKeys, k)
@@ -254,12 +256,15 @@ func (c *Client) ListNodes(ctx context.Context, in *v1.ListNodesRequest, _ ...gr
 	return &v1.ListNodesResponse{Nodes: list}, nil
 }
 
-func (c *Client) MoveNode(ctx context.Context, in *v1.MoveNodeRequest, _ ...grpc.CallOption) (*v1.MoveNodeResponse, error) {
-	return &v1.MoveNodeResponse{}, nil
-}
+// MoveNode RPC was removed upstream in v0.28 (Tags-as-Identity). __CYLONIX_REMOVED__
 
 func (c *Client) BackfillNodeIPs(ctx context.Context, in *v1.BackfillNodeIPsRequest, _ ...grpc.CallOption) (*v1.BackfillNodeIPsResponse, error) {
 	return &v1.BackfillNodeIPsResponse{}, nil
+}
+
+// Health is the v0.28 liveness RPC. Mock returns empty response.
+func (c *Client) Health(ctx context.Context, in *v1.HealthRequest, _ ...grpc.CallOption) (*v1.HealthResponse, error) {
+	return &v1.HealthResponse{}, nil
 }
 
 func (c *Client) CreateNode(ctx context.Context, in *v1.CreateNodeRequest, _ ...grpc.CallOption) (*v1.CreateNodeResponse, error) {
@@ -294,25 +299,13 @@ func (c *Client) UpdateNodeShareToUser(ctx context.Context, in *v1.UpdateNodeSha
 }
 
 // --- Route RPCs ---
+// All pre-v0.26 Route RPCs (GetRoutes/EnableRoute/DisableRoute/GetNodeRoutes/
+// DeleteRoute) were removed upstream when approved routes moved to
+// Node.ApprovedRoutes. v0.28 exposes SetApprovedRoutes instead. __CYLONIX_REMOVED__
 
-func (c *Client) GetRoutes(ctx context.Context, in *v1.GetRoutesRequest, _ ...grpc.CallOption) (*v1.GetRoutesResponse, error) {
-	return &v1.GetRoutesResponse{}, nil
-}
-
-func (c *Client) EnableRoute(ctx context.Context, in *v1.EnableRouteRequest, _ ...grpc.CallOption) (*v1.EnableRouteResponse, error) {
-	return &v1.EnableRouteResponse{}, nil
-}
-
-func (c *Client) DisableRoute(ctx context.Context, in *v1.DisableRouteRequest, _ ...grpc.CallOption) (*v1.DisableRouteResponse, error) {
-	return &v1.DisableRouteResponse{}, nil
-}
-
-func (c *Client) GetNodeRoutes(ctx context.Context, in *v1.GetNodeRoutesRequest, _ ...grpc.CallOption) (*v1.GetNodeRoutesResponse, error) {
-	return &v1.GetNodeRoutesResponse{}, nil
-}
-
-func (c *Client) DeleteRoute(ctx context.Context, in *v1.DeleteRouteRequest, _ ...grpc.CallOption) (*v1.DeleteRouteResponse, error) {
-	return &v1.DeleteRouteResponse{}, nil
+// SetApprovedRoutes is the v0.26+ replacement for the old per-route RPCs.
+func (c *Client) SetApprovedRoutes(ctx context.Context, in *v1.SetApprovedRoutesRequest, _ ...grpc.CallOption) (*v1.SetApprovedRoutesResponse, error) {
+	return &v1.SetApprovedRoutesResponse{}, nil
 }
 
 // --- ApiKey RPCs ---

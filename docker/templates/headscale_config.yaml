@@ -4,12 +4,11 @@
 # - `~/.headscale`
 # - current working directory
 
-# The url clients will connect to.
-# Typically this will be a domain like:
-#
-# https://myheadscale.example.com:443
-#
-server_url: http://127.0.0.1:8000
+# The url clients will connect to. This is what the control plane embeds in
+# AuthURLs returned to nodes during registration, so it MUST be the public
+# URL the clients can reach (e.g. https://manage-v2.cylonix.io). The fronting
+# nginx terminates TLS and proxies the headscale paths to the local listener.
+server_url: ${BASE_URL}
 
 # Address to listen to / bind to on the server
 #
@@ -66,7 +65,9 @@ prefixes:
   # Strategy used for allocation of IPs to nodes, available options:
   # - sequential (default): assigns the next free IP from the previous given IP.
   # - random: assigns the next free IP from a pseudo-random IP generator (crypto/rand).
-  allocation: sequential
+  # cylonix uses random — sequential reveals tailnet membership ordering and
+  # makes the first device's address (100.64.0.1) trivially predictable.
+  allocation: random
 
 # DERP is a relay system that Tailscale uses when a direct
 # connection cannot be established.
@@ -309,15 +310,6 @@ dns:
   #
   #   # you can also put it in one line
   #   - { name: "prometheus.myvpn.example.com", type: "A", value: "100.64.0.3" }
-
-  # DEPRECATED
-  # Use the username as part of the DNS name for nodes, with this option enabled:
-  # node1.username.example.com
-  # while when this is disabled:
-  # node1.example.com
-  # This is a legacy option as Headscale has have this wrongly implemented
-  # while in upstream Tailscale, the username is not included.
-  use_username_in_magic_dns: false
 
 # Unix socket used for the CLI to connect without authentication
 # Note: for production you will want to set this to something like:

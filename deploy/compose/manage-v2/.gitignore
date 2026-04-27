@@ -1,0 +1,13 @@
+# Local env file with secrets — NEVER commit this.
+.env.local
+
+# Per-deployment secret material (Apple Sign-In key, Google service account
+# JSON, etc.). The directory itself is fine to commit but its contents are
+# sensitive.
+secrets/apple/*
+secrets/google/*
+!secrets/apple/.gitkeep
+!secrets/google/.gitkeep
+
+# Backup bundles staged for restore
+backups/

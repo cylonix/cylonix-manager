@@ -206,7 +206,7 @@ func TestDirectLogin_Impl(t *testing.T) {
 
 	// Invalid login type with all fields.
 	_, _, _, _, err = h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{
+		Body: &models.LoginJSONRequestBody{
 			LoginID:    optional.StringP("u"),
 			Credential: optional.StringP("p"),
 			LoginType:  models.LoginType("bogus"),
@@ -217,7 +217,7 @@ func TestDirectLogin_Impl(t *testing.T) {
 	// Redirect URL overrides missing credentials.
 	redirect := "http://example.com"
 	_, r, _, _, err := h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{RedirectURL: &redirect},
+		Body: &models.LoginJSONRequestBody{RedirectURL: &redirect},
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, r)
@@ -229,7 +229,7 @@ func TestPasswordLogin_Impl(t *testing.T) {
 	// Unknown login returns unauthorized.
 	_, _, _, _, err := h.passwordLogin(
 		testNamespace, "", "", "unknown-user", "wrong-pw", "",
-		models.LoginParams{}, nil, testLogger,
+		models.LoginJSONBody{}, nil, testLogger,
 	)
 	assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 }

@@ -24,7 +24,6 @@ import (
 	hstypes "github.com/juanfont/headscale/hscontrol/types"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
-	"tailscale.com/control/controlclient"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -394,7 +393,7 @@ func (n *NodeHandler) AuthStatus(authURL string) (string, error) {
 }
 
 func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
-	userInfo := n.getUserInfo(&node.User)
+	userInfo := n.getUserInfo(node.User)
 	if userInfo == nil {
 		return nil, fmt.Errorf("failed to parse user information: %v", node.User)
 	}
@@ -457,7 +456,7 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 			state = &approval.State
 		}
 		if *state != types.DeviceApproved {
-			return nil, controlclient.UserVisibleError("machine needs approval")
+			return nil, errors.New("machine needs approval")
 		}
 	}
 
@@ -473,7 +472,7 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 }
 
 func (n *NodeHandler) PostAdd(node *hstypes.Node) error {
-	userInfo := n.getUserInfo(&node.User)
+	userInfo := n.getUserInfo(node.User)
 	if userInfo == nil {
 		return fmt.Errorf("failed to parse user information: %v", node.User)
 	}
@@ -584,7 +583,7 @@ func (n *NodeHandler) Update(node *hstypes.Node) (*hstypes.Node, error) {
 }
 
 func (n *NodeHandler) RotateNodeKey(node *hstypes.Node, newKey key.NodePublic) error {
-	userInfo := n.getUserInfo(&node.User)
+	userInfo := n.getUserInfo(node.User)
 	if userInfo == nil {
 		return fmt.Errorf("failed to parse user information: %v", node.User)
 	}
@@ -639,7 +638,7 @@ func (n *NodeHandler) Recover(machineKey key.MachinePublic, nodeKey key.NodePubl
 }
 
 func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID, []hstypes.NodeID, error) {
-	userInfo := n.getUserInfo(&node.User)
+	userInfo := n.getUserInfo(node.User)
 	if userInfo == nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse user information: %v", node.User)
 	}
@@ -663,12 +662,12 @@ func (n *NodeHandler) Peers(node *hstypes.Node) (hstypes.Nodes, []hstypes.NodeID
 			return nil, nil, nil, err
 		}
 		if approval.State != types.DeviceApproved {
-			return nil, nil, nil, controlclient.UserVisibleError("machine needs approval")
+			return nil, nil, nil, errors.New("machine needs approval")
 		}
 		// Device is approved. Add it back.
 		wgInfo, err = n.addNewNode(approval.Namespace, approval.UserID, string(machineKey), node, "")
 		if err != nil {
-			return nil, nil, nil, controlclient.UserVisibleError("machine failed to be added: " + err.Error())
+			return nil, nil, nil, errors.New("machine failed to be added: " + err.Error())
 		}
 	}
 	if wgInfo.Namespace != namespace || wgInfo.UserID != userID {
@@ -694,7 +693,7 @@ func (n *NodeHandler) Profiles(nodes []*hstypes.Node) ([]tailcfg.UserProfile, er
 	var idMap map[types.UserID]uint = make(map[types.ID]uint, len(nodes))
 	var namespace string
 	for _, v := range nodes {
-		u := n.getUserInfo(&v.User)
+		u := n.getUserInfo(v.User)
 		if u == nil {
 			if optional.Bool(v.IsWireguardOnly) {
 				// Wg-server has no user.
@@ -857,7 +856,7 @@ func (n *NodeHandler) RefreshToken(node *hstypes.Node) error {
 }
 
 func (n *NodeHandler) SetExitNode(node *hstypes.Node, exitNodeID string) error {
-	userInfo := n.getUserInfo(&node.User)
+	userInfo := n.getUserInfo(node.User)
 	if userInfo == nil {
 		n.vpnService.logger.WithField("user", node.User).
 			Errorln("failed to parse user information")

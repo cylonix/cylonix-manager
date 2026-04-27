@@ -181,7 +181,7 @@ func TestNodeHandler_PreAdd_NilUser(t *testing.T) {
 	s := NewService(d, fwconfig.NewServiceEmulator(), testLogger)
 	nh := NewNodeHandler(s)
 	// Node with unparseable user name -> error.
-	node := &hstypes.Node{User: hstypes.User{Name: "bad"}}
+	node := &hstypes.Node{User: &hstypes.User{Name: "bad"}}
 	_, err := nh.PreAdd(node)
 	assert.Error(t, err)
 }
@@ -190,7 +190,7 @@ func TestNodeHandler_PostAdd_NilUser(t *testing.T) {
 	d := dt.NewEmulator()
 	s := NewService(d, fwconfig.NewServiceEmulator(), testLogger)
 	nh := NewNodeHandler(s)
-	node := &hstypes.Node{User: hstypes.User{Name: "bad"}}
+	node := &hstypes.Node{User: &hstypes.User{Name: "bad"}}
 	err := nh.PostAdd(node)
 	assert.Error(t, err)
 }
@@ -200,7 +200,7 @@ func TestNodeHandler_Delete_NoOp(t *testing.T) {
 	s := NewService(d, fwconfig.NewServiceEmulator(), testLogger)
 	nh := NewNodeHandler(s)
 	// Delete is a no-op in the current implementation.
-	node := &hstypes.Node{User: hstypes.User{Name: "bad"}}
+	node := &hstypes.Node{User: &hstypes.User{Name: "bad"}}
 	assert.NoError(t, nh.Delete(node))
 }
 
@@ -209,7 +209,7 @@ func TestNodeHandler_Update_NoNode(t *testing.T) {
 	s := NewService(d, fwconfig.NewServiceEmulator(), testLogger)
 	nh := NewNodeHandler(s)
 	// Node ID not in db -> returns node, nil error (no-op).
-	node := &hstypes.Node{ID: 42, User: hstypes.User{Name: "bad"}}
+	node := &hstypes.Node{ID: 42, User: &hstypes.User{Name: "bad"}}
 	ret, err := nh.Update(node)
 	assert.NoError(t, err)
 	assert.Equal(t, node, ret)
@@ -232,7 +232,7 @@ func TestNodeHandler_RotateNodeKey_NoWgInfo(t *testing.T) {
 	d := dt.NewEmulator()
 	s := NewService(d, fwconfig.NewServiceEmulator(), testLogger)
 	nh := NewNodeHandler(s)
-	node := &hstypes.Node{User: hstypes.User{Name: "bad"}}
+	node := &hstypes.Node{User: &hstypes.User{Name: "bad"}}
 	err := nh.RotateNodeKey(node, key.NewNode().Public())
 	assert.Error(t, err)
 }
@@ -252,7 +252,7 @@ func TestNodeHandler_Peers(t *testing.T) {
 	nh := NewNodeHandler(s)
 	// Non-existent node -> empty peers.
 	u := hstypes.User{Name: uuid.New().String(), Namespace: optional.StringP("ns")}
-	node := &hstypes.Node{User: u}
+	node := &hstypes.Node{User: &u}
 	peers, _, _, err := nh.Peers(node)
 	_ = peers
 	_ = err

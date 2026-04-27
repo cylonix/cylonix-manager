@@ -84,11 +84,11 @@ namespace. The namespace is consistent with VPN, Firewall and SD-WAN services.`,
 		fabric.RegisterResource(fabric.DatabaseEtcdType, fabric.OnlyOneService, daemon, log)
 		fabric.Fire(fabric.DatabaseEtcdType, fabric.OnlyOneService, fabric.ActionOnline, log)
 
-		log.Errorln("Start running daemon server....")
+		log.Infoln("Start running daemon server....")
 		if err := daemon.Run(); err != nil {
 			log.Fatalf("Failed to run daemon: %v", err)
 		}
-		log.Errorln("Daemon server stopped running.")
+		log.Infoln("Daemon server stopped running.")
 	},
 }
 

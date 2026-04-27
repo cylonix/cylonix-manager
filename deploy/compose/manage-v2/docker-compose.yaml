@@ -1,0 +1,257 @@
+# manage-v2.cylonix.io — docker-compose stack mirroring the k8s deploy.
+#
+# Intended for testing the v0.28 headscale + v1.96.4 tailscale merge against
+# a clone of the production database. Brings up postgres + redis + etcd +
+# cylonix-manager with the SAME service hostnames and env layout as k8s, so
+# the rendered /etc/cylonix/config.yaml and headscale_config.yaml are
+# identical to what production sees.
+#
+# Hostname trick: the rendered config uses `${SVC_NAME}.${DATABASE_NAMESPACE}`
+# (e.g. `postgres-service.database`). To make that resolve in compose, each
+# service has a network alias of the form `<svc>.database`.
+#
+# Secrets: passwords / OAuth secrets are NOT in env. They live as files
+# under SECRETS_HOST_DIR (default /root/secrets) which is bind-mounted to
+# /etc/secrets in containers. Env vars ending in _FILE point to file paths
+# inside the container; the entrypoint loads the file contents into the
+# matching non-_FILE env var before rendering /etc/cylonix/*.yaml.
+#
+# Usage:
+#   cp .env.local.example .env.local
+#   $EDITOR .env.local                   # fill in non-secret values
+#   ./build.sh                           # one-time: build cylonix-manager image
+#   docker compose --env-file .env.local up -d postgres redis etcd
+#   ../../scripts/restore-into-manage-v2.sh /path/to/backups/cylonix-<ts>
+#   docker compose --env-file .env.local up -d cylonix-manager
+#
+# Tear down without losing data: docker compose --env-file .env.local down
+# Tear down INCLUDING data:      docker compose --env-file .env.local down -v
+
+name: cylonix-manage-v2
+
+services:
+  postgres:
+    image: postgres:14.1-alpine
+    environment:
+      POSTGRES_USER: ${PG_USERNAME}
+      # Official postgres image natively supports POSTGRES_PASSWORD_FILE.
+      POSTGRES_PASSWORD_FILE: ${PG_PASSWORD_FILE}
+      # Match the k8s deploy: leave POSTGRES_DB defaulting to POSTGRES_USER
+      # so an empty `cylonix` DB is auto-created. The cylonix-manager binary
+      # connects to that DB first (no dbname in DSN) and then issues
+      # CREATE DATABASE cylonix_manager if missing. postgres-init.sh handles
+      # the additional headscale + cylonix_supervisor DBs.
+      POSTGRES_DB: ${PG_USERNAME}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ${SECRETS_HOST_DIR:-/root/secrets}:/etc/secrets:ro
+    networks:
+      default:
+        aliases:
+          - postgres-service.database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USERNAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      default:
+        aliases:
+          - redis-service.database
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ipdrawer:
+    # Cylonix IP allocator. Headscale's NodeHandler.AllocateIPs (cylonix
+    # IPDrawer wrapper) routes here via the github.com/cylonix/utils/ipdrawer
+    # client, which resolves the address from IPDRAWER_SERVICE_NAME +
+    # IPDRAWER_PORT in the manager env. The k8s deploy points it at
+    # `redis-service` for shared state (configured per-tenant prefix lists,
+    # IP-leases, etc.) — same redis the rest of the stack uses.
+    image: cylonix/ipdrawer:v2.1
+    command:
+      - start
+      - --redis-host
+      # Use the network alias that matches k8s-style discovery
+      # (`<svc>-service.database`), since the bare `redis-service` shortname
+      # only resolves within the same k8s namespace, not under compose.
+      - redis-service.database
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:25577:25577"
+    networks:
+      default:
+        aliases:
+          - ipdrawer-service.database
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.14
+    command:
+      - etcd
+      - --name=etcd0
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd-service.database:2379
+      - --auto-compaction-retention=10m
+      - --auto-compaction-mode=periodic
+    ports:
+      - "127.0.0.1:2380:2379"
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      default:
+        aliases:
+          - etcd-service.database
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  cylonix-manager:
+    image: cylonix/cylonix-manager:test-merge-v0.28
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+      ipdrawer:
+        condition: service_started
+    environment:
+      # Service discovery (matches k8s ConfigMap exactly)
+      DATABASE_NAMESPACE: ${DATABASE_NAMESPACE}
+      POSTGRES_SERVICE_NAME: ${POSTGRES_SERVICE_NAME}
+      REDIS_SERVICE_NAME: ${REDIS_SERVICE_NAME}
+      ETCD_SERVICE_NAME: ${ETCD_SERVICE_NAME}
+      PROMETHEUS_SERVICE_NAME: ${PROMETHEUS_SERVICE_NAME}
+      SUPERVISOR_SERVICE_NAME: ${SUPERVISOR_SERVICE_NAME}
+      IPDRAWER_SERVICE_NAME: ${IPDRAWER_SERVICE_NAME}
+      INFLUXDB_SERVICE_NAME: ${INFLUXDB_SERVICE_NAME}
+      IPDRAWER_PORT: ${IPDRAWER_PORT}
+      SERVICE_SCHEME: ${SERVICE_SCHEME}
+      ETCD_PREFIX: ${ETCD_PREFIX}
+      REDIS_PREFIX: ${REDIS_PREFIX}
+
+      # DB credentials — password is loaded from PG_PASSWORD_FILE by the
+      # entrypoint and exported as PG_PASSWORD before envsubst runs.
+      PG_USERNAME: ${PG_USERNAME}
+      PG_PASSWORD_FILE: ${PG_PASSWORD_FILE}
+      PG_DB_NAME: ${PG_DB_NAME}
+
+      # Headscale config
+      HEADSCALE_CONFIG: /etc/cylonix/headscale_config.yaml
+      HEADSCALE_BASE_DOMAIN: ${HEADSCALE_BASE_DOMAIN}
+
+      # Public URL / branding
+      DOMAIN: ${DOMAIN}
+      BASE_URL: ${BASE_URL}
+      COMPANY_NAME: ${COMPANY_NAME}
+      COMPANY_WEBSITE: ${COMPANY_WEBSITE}
+      CONTACT_EMAIL: ${COMPANY_CONTACT_EMAIL}
+
+      # Sysadmin — email is the login name. Password loaded from
+      # CYLONIX_ADMIN_PASSWORD_FILE by the entrypoint.
+      CYLONIX_ADMIN_PASSWORD_FILE: ${CYLONIX_ADMIN_PASSWORD_FILE}
+      CYLONIX_ADMIN_EMAIL: ${CYLONIX_ADMIN_EMAIL}
+      CYLONIX_ADMIN_FIRST_NAME: ${CYLONIX_ADMIN_FIRST_NAME}
+      CYLONIX_ADMIN_LAST_NAME: ${CYLONIX_ADMIN_LAST_NAME}
+
+      # OAuth — secrets loaded from *_FILE env vars by the entrypoint.
+      GOOGLE_LOGIN_CLIENT_ID: ${GOOGLE_LOGIN_CLIENT_ID}
+      GOOGLE_LOGIN_CLIENT_SECRET_FILE: ${GOOGLE_LOGIN_CLIENT_SECRET_FILE}
+      APPLE_LOGIN_CLIENT_ID: ${APPLE_LOGIN_CLIENT_ID}
+      APPLE_LOGIN_TEAM_ID: ${APPLE_LOGIN_TEAM_ID}
+      APPLE_LOGIN_KEY_ID: ${APPLE_LOGIN_KEY_ID}
+      # Apple "client secret" stays a path — the manager opens the .p8 file.
+      APPLE_LOGIN_CLIENT_SECRET: ${APPLE_LOGIN_CLIENT_SECRET}
+      GITHUB_LOGIN_CLIENT_ID: ${GITHUB_LOGIN_CLIENT_ID}
+      GITHUB_LOGIN_CLIENT_SECRET_FILE: ${GITHUB_LOGIN_CLIENT_SECRET_FILE}
+      MICROSOFT_LOGIN_CLIENT_ID: ${MICROSOFT_LOGIN_CLIENT_ID}
+      MICROSOFT_LOGIN_CLIENT_SECRET_FILE: ${MICROSOFT_LOGIN_CLIENT_SECRET_FILE}
+
+      # Email / SMS — service-account JSON is already a file path used as-is.
+      SEND_EMAIL_PROVIDER: ${SEND_EMAIL_PROVIDER}
+      SEND_EMAIL_FROM_ADDRESS: ${SEND_EMAIL_FROM_ADDRESS}
+      SEND_EMAIL_LOCAL_NAME: ${SEND_EMAIL_LOCAL_NAME}
+      SEND_EMAIL_RELAY_SERVER: ${SEND_EMAIL_RELAY_SERVER}
+      SEND_EMAIL_RELAY_SERVER_PORT: ${SEND_EMAIL_RELAY_SERVER_PORT}
+      SEND_EMAIL_SERVICE_ACCOUNT_FILE: ${SEND_EMAIL_SERVICE_ACCOUNT_FILE}
+      SEND_SMS_PROVIDER: ${SEND_SMS_PROVIDER}
+      SEND_SMS_REGION_ID: ${SEND_SMS_REGION_ID}
+      SEND_SMS_ACCESS_KEY_ID: ${SEND_SMS_ACCESS_KEY_ID}
+      SEND_SMS_ACCESS_KEY_SECRET_FILE: ${SEND_SMS_ACCESS_KEY_SECRET_FILE}
+      SEND_SMS_REQUEST_SIGN_NAME: ${SEND_SMS_REQUEST_SIGN_NAME}
+
+      # TLS
+      CYLONIX_MANAGER_NO_TLS: ${CYLONIX_MANAGER_NO_TLS}
+
+      # Task runner
+      TASK_LOG_LEVEL: ${TASK_LOG_LEVEL}
+      TASK_INTERVAL: ${TASK_INTERVAL}
+    ports:
+      # Host ports chosen to avoid collisions on manage-v2.cylonix.io
+      # (port 8001 is taken by an existing uvicorn). Front with nginx for TLS.
+      - "8082:8000"   # vpn (headscale gRPC + noise)
+      - "8081:8080"   # manager API
+      - "8071:8070"   # websocket
+    volumes:
+      # /etc/sase MUST persist across docker compose down -v. It holds the
+      # headscale noise private key (server identity); regenerating it
+      # invalidates every registered cylonix client (chacha20poly1305:
+      # message authentication failed on every poll until the client logs
+      # out and re-registers). The k8s deploy uses a hostPath to /var/lib/
+      # cylonix/<namespace>/etc/sase for the same reason. Host-bind here
+      # so the named-volume wipe (`docker compose down -v`) doesn't nuke it.
+      - ${MANAGER_STATE_HOST_DIR:-/var/lib/cylonix/manage-v2/sase}:/etc/sase
+      # All secrets, read-only. Layout under SECRETS_HOST_DIR:
+      #   admin/password
+      #   apple/private-key.p8
+      #   database/pg-password
+      #   google/client-secret
+      #   google/service-account.json
+      - ${SECRETS_HOST_DIR:-/root/secrets}:/etc/secrets:ro
+
+  cylonix-manager-ui:
+    # Static SPA bundle served by nginx inside the container. The image's
+    # /docker-entrypoint.d/entrypoint.sh sed-injects window.configs into
+    # index.html from the VITE_* env at startup, so the values are baked
+    # in per-deployment without a rebuild.
+    image: ${CYLONIX_UI_IMAGE:-cylonix/cylonix-manager-ui:test-merge-v0.28}
+    environment:
+      VITE_BASE_URL: ${BASE_URL}/manager/v2
+      VITE_LOGIN_REDIRECT_BASE_URL: ${BASE_URL}/oauth-success
+      VITE_WS_URL: ${BASE_URL}/ws/log/v1/alert
+      VITE_COMPANY_NAME: ${COMPANY_NAME}
+      VITE_COMPANY_WEBSITE: ${COMPANY_WEBSITE}
+      VITE_CONTACT_EMAIL: ${COMPANY_CONTACT_EMAIL}
+    ports:
+      - "8090:8001"   # UI (internal nginx listens on 8001)
+
+volumes:
+  postgres-data:
+  redis-data:
+  etcd-data:
+  # manager-state removed: /etc/sase now host-bind-mounted at
+  # ${MANAGER_STATE_HOST_DIR} so the noise private key (server identity)
+  # survives `docker compose down -v`.
+
+networks:
+  default:
+    name: cylonix-manage-v2_default

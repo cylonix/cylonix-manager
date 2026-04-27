@@ -30,7 +30,7 @@ func TestNodeHandlers(t *testing.T) {
 	}
 	t.Run("Profiles", func(t *testing.T) {
 		node := hstypes.Node{
-			User: *nodeUser,
+			User: nodeUser,
 		}
 		list, err := nh.Profiles([]*hstypes.Node{&node})
 		assert.Nil(t, err)

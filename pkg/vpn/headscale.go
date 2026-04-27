@@ -64,7 +64,7 @@ func Run(nodeHandler hstypes.NodeHandler, logger *logrus.Entry) error {
 }
 
 func runHeadscale(nodeHandler hstypes.NodeHandler, logger *logrus.Entry) error {
-	cfg, err := hstypes.GetHeadscaleConfig()
+	cfg, err := hstypes.LoadServerConfig()
 	if err != nil {
 		return err
 	}
@@ -132,22 +132,37 @@ func createHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 		return nil, err
 	}
 	user := &hstypes.User{}
-	if err = user.FromProto(response.User); err != nil {
-		return nil, err
-	}
+	user.FromProto(response.User)
 	return user, nil
 }
 
+// findHsUserByName queries headscale via ListUsers filtered by name and returns
+// the first match. It's the cylonix-manager stand-in for the v0.27 GetUser RPC
+// which upstream never exposed and cylonix didn't re-add to the proto service
+// after the v0.28 merge.
+func findHsUserByName(ctx context.Context, name string) (*v1.User, error) {
+	client := getHsClient()
+	resp, err := client.ListUsers(ctx, &v1.ListUsersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range resp.GetUsers() {
+		if u.GetName() == name {
+			return u, nil
+		}
+	}
+	return nil, hsdb.ErrUserNotFound
+}
+
 func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
-	request := &v1.GetUserRequest{Name: userInfo.UserID.String()}
 	client := getHsClient()
 	ctx, cancel := newHsClientContext()
 	defer cancel()
-	response, err := client.GetUser(ctx, request)
+	protoUser, err := findHsUserByName(ctx, userInfo.UserID.String())
 	user := &hstypes.User{}
 	if err == nil {
-		if response.User != nil &&
-			response.User.Network != userInfo.Network &&
+		if protoUser != nil &&
+			protoUser.GetNetwork() != userInfo.Network &&
 			userInfo.Network != "" {
 			logger.WithFields(logrus.Fields{
 				"namespace": userInfo.Namespace,
@@ -163,7 +178,7 @@ func getOrCreateHsUser(userInfo *UserInfo) (*hstypes.User, error) {
 				return nil, fmt.Errorf("failed to update user network domain: %w", err)
 			}
 		}
-		err = user.FromProto(response.User)
+		user.FromProto(protoUser)
 	}
 	if err != nil && strings.Contains(err.Error(), hsdb.ErrUserNotFound.Error()) {
 		user, err = createHsUser(userInfo)
@@ -181,8 +196,9 @@ func DeleteHsUser(namespace, network string, userID types.UserID) error {
 		}
 		return ErrHeadscaleNotInitialized
 	}
+	name := userID.String()
 	request := &v1.DeleteUserRequest{
-		Name:      userID.String(),
+		Name:      &name,
 		Namespace: &namespace,
 		Network:   &network,
 	}
@@ -367,8 +383,14 @@ func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, 
 	if namespace != "" && node.Namespace != namespace {
 		return nil, fmt.Errorf("node namespace mismatch: expected %v, got %v", namespace, node.Namespace)
 	}
-	if userID != nil && node.User.Name != userID.String() {
-		return nil, fmt.Errorf("node userID mismatch: expected %v, got %v", userID.String(), node.User.Name)
+	if userID != nil {
+		gotName := ""
+		if node.User != nil {
+			gotName = node.User.Name
+		}
+		if gotName != userID.String() {
+			return nil, fmt.Errorf("node userID mismatch: expected %v, got %v", userID.String(), gotName)
+		}
 	}
 	return node, nil
 }

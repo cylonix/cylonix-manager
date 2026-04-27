@@ -27,6 +27,7 @@ import (
 	"cylonix/sase/pkg/logging"
 	"cylonix/sase/pkg/metrics"
 	"cylonix/sase/pkg/optional"
+	"cylonix/sase/pkg/redactlog"
 	"cylonix/sase/pkg/resources"
 	"cylonix/sase/pkg/sendmail"
 	"cylonix/sase/pkg/tools/es"
@@ -296,6 +297,10 @@ func (d *Daemon) Serve() {
 		QuietDownPeriod: 10 * time.Second,
 		// SourceFieldName: "source",
 	})
+	// Redact sensitive query-string params (credential, password, token, ...)
+	// from r.URL before the request logger sees it. Must run BEFORE the
+	// httplog middleware. See pkg/redactlog/redactlog.go for the full list.
+	r.Use(redactlog.Middleware)
 	r.Use(httplog.RequestLogger(logger))
 
 	// Use validation middleware to check all requests against the schema.
@@ -391,13 +396,16 @@ func (d *Daemon) Run() error {
 }
 
 func (d *Daemon) initSysAdmin() error {
-	namespace, username, password, email, firstName, lastName := utils.GetCylonixAdminInfo()
+	namespace, password, email, firstName, lastName := utils.GetCylonixAdminInfo()
+	if email == "" {
+		return fmt.Errorf("sys_admin.email is required (used as login name)")
+	}
 	log := d.Logger().WithFields(logrus.Fields{
-		"handle": "initSysAdmin",
-		"username": username,
+		"handle":    "initSysAdmin",
 		"namespace": namespace,
-	}).WithField("sysadmin", username)
-	login, err := db.GetUserLoginByLoginName("", username)
+		"email":     email,
+	}).WithField("sysadmin", email)
+	login, err := db.GetUserLoginByLoginName("", email)
 	if err != nil {
 		if !errors.Is(err, db.ErrUserLoginNotExists) {
 			return fmt.Errorf("failed to check if sysadmin user login exists: %w", err)
@@ -411,7 +419,7 @@ func (d *Daemon) initSysAdmin() error {
 				log.Infoln("Sys admin user already exists. Skip init...")
 				return nil
 			}
-			return fmt.Errorf("user %s exists and is not sys admin", username)
+			return fmt.Errorf("user %s exists and is not sys admin", email)
 		}
 		if !errors.Is(err, db.ErrUserNotExists) {
 			return fmt.Errorf("failed to check if user exists: %w", err)
@@ -432,7 +440,7 @@ func (d *Daemon) initSysAdmin() error {
 		}
 	}
 
-	_, err = db.AddSysAdminUser(namespace, email, "", displayName, username, password)
+	_, err = db.AddSysAdminUser(namespace, email, "", displayName, password)
 	if err != nil {
 		return fmt.Errorf("failed to create sys admin user: %w", err)
 	}

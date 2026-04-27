@@ -48,12 +48,9 @@ prometheus:
   port: $PROMETHEUS_PORT
 
 # The sys admin account for the whole deployment. aka the System Administrator.
-# Username is required so that we can validate if sysadmin has been created.
-# Other information is only needed if keycloak as not setup directly from
-# keycloak admin page. If username is not provided, it will be default to
-# "admin".
+# The email IS the login name — there's no separate username, so the standard
+# email-input login flow works for sysadmin like every other user.
 sys_admin:
-  username: "$CYLONIX_ADMIN_USERNAME"
   password: "$CYLONIX_ADMIN_PASSWORD"
   email: "$CYLONIX_ADMIN_EMAIL"
   first_name: "$CYLONIX_ADMIN_FIRST_NAME"

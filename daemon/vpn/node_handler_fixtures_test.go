@@ -67,7 +67,7 @@ func TestNodeHandler_PreAdd_AutoApprove(t *testing.T) {
 		NetworkDomain: "net",
 		GivenName:     s.Device.Name,
 		IPv4:          &addr,
-		User: hstypes.User{
+		User: &hstypes.User{
 			Name:      s.User.ID.String(),
 			Namespace: &s.Namespace,
 		},

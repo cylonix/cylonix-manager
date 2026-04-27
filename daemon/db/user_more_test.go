@@ -231,7 +231,7 @@ func TestAddSysAdminUser(t *testing.T) {
 	}
 
 	// Try adding a sysadmin user for that namespace.
-	sys, err := AddSysAdminUser("ns-sysadmin-add", "sys@x.com", "", "Sys", "sys-"+uuid.New().String()[:6], "Pass1!")
+	sys, err := AddSysAdminUser("ns-sysadmin-add", "sys@x.com", "", "Sys", "Pass1!")
 	if err == nil {
 		defer DeleteUser(nil, "ns-sysadmin-add", sys.ID)
 		assert.NotNil(t, sys)

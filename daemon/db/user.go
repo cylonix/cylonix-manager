@@ -402,10 +402,15 @@ func checkUserCreationError(err error) error {
 	return err
 }
 
-func AddSysAdminUser(namespace, email, phone, displayName, username, password string) (*types.User, error) {
+func AddSysAdminUser(namespace, email, phone, displayName, password string) (*types.User, error) {
+	// login_name = email so the standard email-input login flow finds the
+	// sysadmin like any other user. login_type stays Username because the
+	// sysadmin authenticates with a password (Normalize bcrypt-hashes the
+	// credential when login_type is Username; LoginTypeEmail would mean
+	// OTP-based login and store the credential as plaintext).
 	return addUser(namespace, email, phone, displayName, []types.UserLogin{
 		{
-			LoginName:   username,
+			LoginName:   email,
 			Credential:  password,
 			DisplayName: displayName,
 			LoginType:   types.LoginTypeUsername,
@@ -1077,6 +1082,32 @@ func GetUserBaseInfoFast(namespace string, userID types.UserID) (*types.UserBase
 }
 func GetUserBaseInfoCacheOnly(namespace string, userID types.UserID) (*types.UserBaseInfo, error) {
 	return getUserBaseInfoFast(namespace, userID, true /* no fallback */)
+}
+
+// GetUserBaseInfoByEmail looks up a user_base_info by email. login_name in
+// user_logins is unique within a namespace and not necessarily the user's
+// email — sysadmin in particular has login_name="admin" but email is
+// "admin@cylonix.io". The login UI's email input therefore needs to fall
+// back to user_base_infos.email to find the user across namespaces.
+func GetUserBaseInfoByEmail(email string) (*types.UserBaseInfo, error) {
+	if email == "" {
+		return nil, ErrBadParams
+	}
+	pg, err := postgres.Connect()
+	if err != nil {
+		return nil, err
+	}
+	ret := &types.UserBaseInfo{}
+	err = pg.Model(&types.UserBaseInfo{}).
+		Where("LOWER(email) = LOWER(?)", email).
+		First(ret).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotExists
+		}
+		return nil, err
+	}
+	return ret, nil
 }
 
 func GetUserByEmailDomainOrNil(domain string) (*types.User, error) {

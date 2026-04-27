@@ -110,21 +110,21 @@ func TestPasswordLogin_WithFixtures(t *testing.T) {
 	// Unknown username -> unauthorized.
 	_, _, _, _, err = h.passwordLogin(
 		s.Namespace, "", "", "nope", "whatever", "",
-		models.LoginParams{}, nil, testLogger,
+		models.LoginJSONBody{}, nil, testLogger,
 	)
 	assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 
 	// Wrong password.
 	_, _, _, _, err = h.passwordLogin(
 		s.Namespace, "", "", newUsername, "wrong", "",
-		models.LoginParams{}, nil, testLogger,
+		models.LoginJSONBody{}, nil, testLogger,
 	)
 	assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 
 	// Correct password.
 	ls, _, _, _, err := h.passwordLogin(
 		s.Namespace, "", "", newUsername, newPassword, "",
-		models.LoginParams{}, nil, testLogger,
+		models.LoginJSONBody{}, nil, testLogger,
 	)
 	_ = ls
 	_ = err
@@ -137,13 +137,13 @@ func TestDirectLogin_Invalid(t *testing.T) {
 
 	// Missing login id + credential + no redirect URL -> bad params.
 	_, _, _, _, err := h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{},
+		Body: &models.LoginJSONRequestBody{},
 	})
 	assert.Error(t, err)
 
 	// Invalid access point id -> bad params.
 	_, _, _, _, err = h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{
+		Body: &models.LoginJSONRequestBody{
 			LoginID:     optional.StringP("x"),
 			Credential:  optional.StringP("y"),
 			LoginType:   models.LoginTypeUsername,
@@ -154,7 +154,7 @@ func TestDirectLogin_Invalid(t *testing.T) {
 
 	// Unknown login type -> bad params.
 	_, _, _, _, err = h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{
+		Body: &models.LoginJSONRequestBody{
 			LoginID:    optional.StringP("x"),
 			Credential: optional.StringP("y"),
 			LoginType:  models.LoginType("bogus"),
@@ -206,7 +206,7 @@ func TestDirectLogin_AccessKey_WithFixtures(t *testing.T) {
 
 	h := newHandlerImpl(testLogger)
 	loginSuccess, _, _, _, err := h.DirectLogin(nil, api.LoginRequestObject{
-		Params: models.LoginParams{
+		Body: &models.LoginJSONRequestBody{
 			Namespace:  &s.Namespace,
 			LoginID:    optional.StringP("u"),
 			Credential: optional.StringP(akey.ID.String()),
@@ -231,7 +231,7 @@ func TestDirectLogin_Token(t *testing.T) {
 	// Set the login type so the token maps to the seeded username login.
 	s.UserToken.LoginType = string(types.LoginTypeUsername)
 	ls, _, _, _, err := h.DirectLogin(s.UserToken, api.LoginRequestObject{
-		Params: models.LoginParams{},
+		Body: &models.LoginJSONRequestBody{},
 	})
 	assert.NoError(t, err)
 	_ = ls
@@ -274,7 +274,7 @@ func TestAddOauthToken_NilToken(t *testing.T) {
 func TestPasswordLogin_BadUser(t *testing.T) {
 	h := newHandlerImpl(testLogger)
 	_, _, _, _, err := h.passwordLogin(
-		"ns", "", "", "nouser", "nopass", "", models.LoginParams{}, nil, testLogger,
+		"ns", "", "", "nouser", "nopass", "", models.LoginJSONBody{}, nil, testLogger,
 	)
 	assert.ErrorIs(t, err, common.ErrModelUnauthorized)
 }

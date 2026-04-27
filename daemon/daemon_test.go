@@ -40,6 +40,10 @@ func initTestDB() error {
 
 func TestInitSysAdmin(t *testing.T) {
 	viper.Set("base_url", "http://localhost")
+	viper.Set("sys_admin.email", "sysadmin@example.com")
+	viper.Set("sys_admin.password", "test-sysadmin-password")
+	viper.Set("sys_admin.first_name", "Sys")
+	viper.Set("sys_admin.last_name", "Admin")
 	d, err := NewDaemon(context.Background(), nil, nil, &utils.ConfigCheckSetting{})
 	assert.Nil(t, err)
 	err = d.initSysAdmin()

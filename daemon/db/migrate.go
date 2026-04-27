@@ -18,20 +18,39 @@ var (
 		{
 			ID: "202410310000",
 			Migrate: func(tx *gorm.DB) error {
-				if err := tx.Migrator().DropIndex(&types.WgInfo{}, "idx_wg_infos_machine_key"); err != nil {
-					log.Printf("Failed to drop the wg_infos addresses column: %v", err)
+				// Drop legacy WgInfo indexes if they exist (only present on
+				// pre-existing deployments — fresh DBs skip this block).
+				if tx.Migrator().HasTable(&types.WgInfo{}) {
+					for _, idx := range []string{
+						"idx_wg_infos_machine_key",
+						"idx_wg_infos_addresses_",
+					} {
+						if !tx.Migrator().HasIndex(&types.WgInfo{}, idx) {
+							continue
+						}
+						if err := tx.Migrator().DropIndex(&types.WgInfo{}, idx); err != nil {
+							log.Printf("Failed to drop wg_infos index %q: %v", idx, err)
+						}
+					}
 				}
-				if err := tx.Migrator().DropIndex(&types.WgInfo{}, "idx_wg_infos_addresses_"); err != nil {
-					log.Printf("Failed to drop the wg_infos addresses column: %v", err)
-				}
-				if err := tx.Migrator().DropIndex(&types.WgNode{}, "idx_wg_nodes_addresses_"); err != nil {
-					log.Printf("Failed to drop the wg_nodes addresses column: %v", err)
-				}
-				if err := tx.Migrator().DropIndex(&types.WgNode{}, "wg_node_namespace_stable_id"); err != nil {
-					log.Printf("Failed to drop the wg_infos stable_id column: %v", err)
-				}
-				if err := tx.Migrator().DropColumn(&types.WgNode{}, "StableID"); err != nil {
-					log.Printf("Failed to drop the wg_infos stable_id column: %v", err)
+				// Same for WgNode.
+				if tx.Migrator().HasTable(&types.WgNode{}) {
+					for _, idx := range []string{
+						"idx_wg_nodes_addresses_",
+						"wg_node_namespace_stable_id",
+					} {
+						if !tx.Migrator().HasIndex(&types.WgNode{}, idx) {
+							continue
+						}
+						if err := tx.Migrator().DropIndex(&types.WgNode{}, idx); err != nil {
+							log.Printf("Failed to drop wg_nodes index %q: %v", idx, err)
+						}
+					}
+					if tx.Migrator().HasColumn(&types.WgNode{}, "StableID") {
+						if err := tx.Migrator().DropColumn(&types.WgNode{}, "StableID"); err != nil {
+							log.Printf("Failed to drop wg_nodes column StableID: %v", err)
+						}
+					}
 				}
 				return tx.AutoMigrate(Tables()...)
 			},

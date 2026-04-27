@@ -130,7 +130,11 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 	additionalAuth *models.AdditionalAuthInfo,
 	err error,
 ) {
-	params := requestObject.Params
+	if requestObject.Body == nil {
+		err = common.NewBadParamsErr(errors.New("missing login request body"))
+		return
+	}
+	params := *requestObject.Body
 	token, _, _, logger := common.ParseToken(auth, "direct-login", "Direct login", h.logger)
 	logger = h.logger.WithFields(logrus.Fields{
 		ulog.Handle:       "direct-login",
@@ -195,7 +199,7 @@ func (h *handlerImpl) DirectLogin(auth interface{}, requestObject api.LoginReque
 		logger = logger.WithField(ulog.Username, *params.LoginID)
 		loginSuccess, redirect, approvalState, additionalAuth, err = h.passwordLogin(
 			namespace, sessionID, inviteCode, *params.LoginID,
-			*params.Credential, wgName, params, params.RedirectURL, logger,
+			*params.Credential, wgName, models.LoginJSONBody(params), params.RedirectURL, logger,
 		)
 		// Ignore redirect if user didn't ask for it.
 		if redirect != nil && (params.RedirectURL == nil || *params.RedirectURL == "") {
@@ -340,24 +344,44 @@ func (h *handlerImpl) OauthRedirectURL(auth interface{}, requestObject api.GetOa
 		} else {
 			login, err := db.GetUserLoginByLoginName(namespace, email)
 			if err != nil {
-				if errors.Is(err, db.ErrUserLoginNotExists) {
-					// User does not exist. Check if the domain has been registered.
-					// Custom domain can only be created if user can validate domain
-					// ownership through web finger.
-					domain := strings.SplitN(email, "@", 2)[1]
-					customAuth, err := db.GetAuthProviderByDomain(namespace, domain)
-					if err != nil {
-						if errors.Is(err, db.ErrAuthProviderNotExists) {
-							logger.WithError(err).Debugln("Login not exists.")
-							return nil, common.ErrModelUnauthorized
-						}
-						logger.WithError(err).Errorln("Failed to check auth provider domain.")
+				if !errors.Is(err, db.ErrUserLoginNotExists) {
+					logger.WithError(err).Errorln("Failed to get user login.")
+					return nil, common.ErrInternalErr
+				}
+				// login_name didn't match the email. Fall back to looking up
+				// by user_base_infos.email — login_name is unique per
+				// namespace but isn't necessarily the user's email (e.g.
+				// sysadmin has login_name="admin", email="admin@example").
+				if baseInfo, bErr := db.GetUserBaseInfoByEmail(email); bErr == nil && baseInfo != nil {
+					logins, lErr := db.GetUserLoginByUserID(baseInfo.Namespace, baseInfo.UserID)
+					if lErr != nil && !errors.Is(lErr, db.ErrUserLoginNotExists) {
+						logger.WithError(lErr).Errorln("Failed to get user login by user id.")
 						return nil, common.ErrInternalErr
 					}
-					return newCustomAuthRedirectURL(customAuth, userType, &params, logger)
+					if len(logins) > 0 {
+						login = logins[0]
+						logger.WithField("login-name", login.LoginName).Debugln("Resolved user via user_base_infos email")
+					}
+				} else if bErr != nil && !errors.Is(bErr, db.ErrUserNotExists) {
+					logger.WithError(bErr).Errorln("Failed to look up base info by email.")
+					return nil, common.ErrInternalErr
 				}
-				logger.WithError(err).Errorln("Failed to get user login.")
-				return nil, common.ErrInternalErr
+			}
+			if login == nil {
+				// User does not exist. Check if the domain has been registered.
+				// Custom domain can only be created if user can validate domain
+				// ownership through web finger.
+				domain := strings.SplitN(email, "@", 2)[1]
+				customAuth, err := db.GetAuthProviderByDomain(namespace, domain)
+				if err != nil {
+					if errors.Is(err, db.ErrAuthProviderNotExists) {
+						logger.Debugln("Login not exists.")
+						return nil, common.ErrModelUnauthorized
+					}
+					logger.WithError(err).Errorln("Failed to check auth provider domain.")
+					return nil, common.ErrInternalErr
+				}
+				return newCustomAuthRedirectURL(customAuth, userType, &params, logger)
 			}
 			if login.CustomAuth != nil {
 				return newCustomAuthRedirectURL(login.CustomAuth, userType, &params, logger)
@@ -450,7 +474,7 @@ func (h *handlerImpl) OauthCallbackPost(auth interface{}, requestObject api.Oaut
 
 func (h *handlerImpl) passwordLogin(
 	namespace, sessionID, inviteCode, username, password, wgName string,
-	params models.LoginParams, redirectURL *string, logger *logrus.Entry) (
+	params models.LoginJSONBody, redirectURL *string, logger *logrus.Entry) (
 	*models.LoginSuccess, *models.RedirectURLConfig,
 	*models.ApprovalState, *models.AdditionalAuthInfo, error,
 ) {

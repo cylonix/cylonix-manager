@@ -1,0 +1,132 @@
+# Cylonix manager test deploy — minimal docker-compose for v0.28 merge verification.
+#
+# Brings up the same dependency stack the k8s deploy provides (postgres + redis +
+# etcd + cylonix-manager) on a single host, so we can run real-device tests
+# against this before touching the manage-v2 cluster.
+#
+# Usage:
+#   ./build.sh             # builds the manager binary on host (uses local
+#                          # tailscale fork via go.mod replace)
+#   docker compose up -d   # brings up postgres/redis/etcd/cylonix-manager
+#   docker compose logs -f cylonix-manager
+#
+# Backup before testing on real data:
+#   docker compose exec postgres pg_dump -U cylonix cylonix_manager > backup.sql
+#
+# Tear down without losing data:
+#   docker compose down
+# Tear down INCLUDING data (start fresh):
+#   docker compose down -v
+#
+# All cylonix-manager state lives in named volumes (postgres-data, redis-data,
+# etcd-data, manager-state). Restart preserves them; -v wipes them.
+
+name: cylonix-manager-test
+
+services:
+  postgres:
+    image: postgres:14.1-alpine
+    environment:
+      POSTGRES_USER: cylonix
+      POSTGRES_PASSWORD: cylonix
+      POSTGRES_DB: cylonix_manager
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cylonix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  etcd:
+    # bitnami/etcd:3.5 was removed from Docker Hub; use the official image.
+    image: quay.io/coreos/etcd:v3.5.14
+    command:
+      - etcd
+      - --name=etcd0
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --auto-compaction-retention=10m
+      - --auto-compaction-mode=periodic
+    ports:
+      - "127.0.0.1:2379:2379"
+    volumes:
+      - etcd-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  cylonix-manager:
+    # Built by ./build.sh from the local source tree. The image embeds the
+    # cylonix-manager binary which itself bundles the headscale control plane
+    # as a library.
+    image: cylonix/cylonix-manager:test-merge-v0.28
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+    environment:
+      # Database
+      POSTGRES_SERVICE_NAME: postgres
+      PG_USERNAME: cylonix
+      PG_PASSWORD: cylonix
+      PG_DB_NAME: cylonix_manager
+
+      # Redis / etcd
+      REDIS_SERVICE_NAME: redis
+      ETCD_SERVICE_NAME: etcd
+
+      # Headscale config path (rendered into the container by entrypoint.sh)
+      HEADSCALE_CONFIG: /etc/cylonix/headscale_config.yaml
+
+      # Cylonix admin (test-only credentials)
+      CYLONIX_ADMIN_EMAIL: admin@local.test
+      CYLONIX_ADMIN_FIRST_NAME: Test
+      CYLONIX_ADMIN_LAST_NAME: Admin
+
+      # Disable TLS so we can curl the local API without a cert chain
+      CYLONIX_MANAGER_NO_TLS: "true"
+
+      # Headscale base domain (real-device tests will need to resolve this).
+      # Override to the LAN IP+port if you're running on a different host.
+      HEADSCALE_BASE_DOMAIN: local.cylonix.io
+
+      DOMAIN: local.cylonix.io
+      BASE_URL: https://local.cylonix.io
+    ports:
+      - "8000:8000"   # vpn (headscale gRPC + noise)
+      - "8080:8080"   # manager API
+      - "8070:8070"   # websocket
+    volumes:
+      - manager-state:/etc/sase
+      # The container's /opt/entrypoint.sh runs envsubst on /opt/templates
+      # at startup and writes the rendered files into /etc/cylonix using the
+      # environment block above, so we don't need to mount config files.
+      # If you want to override anything: bind-mount over /etc/cylonix/*.yaml.
+
+volumes:
+  postgres-data:
+  redis-data:
+  etcd-data:
+  manager-state:

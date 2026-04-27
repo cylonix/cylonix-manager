@@ -56,7 +56,7 @@ func TestNodeHandler_SetExitNode_BadUser(t *testing.T) {
 	nh := NewNodeHandler(svc)
 
 	// Bad user info -> error.
-	node := &hstypes.Node{User: hstypes.User{Name: "not-a-uuid"}}
+	node := &hstypes.Node{User: &hstypes.User{Name: "not-a-uuid"}}
 	err := nh.SetExitNode(node, "x")
 	assert.Error(t, err)
 }
@@ -76,7 +76,7 @@ func TestNodeHandler_SetExitNode_NodeNotFound(t *testing.T) {
 	// Valid user but no matching wg info -> error.
 	node := &hstypes.Node{
 		ID: 99999,
-		User: hstypes.User{
+		User: &hstypes.User{
 			Name:      s.User.ID.String(),
 			Namespace: optional.StringP(s.Namespace),
 		},

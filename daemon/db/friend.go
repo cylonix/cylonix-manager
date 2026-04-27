@@ -182,7 +182,22 @@ func UpdateFriendRequests(namespace string, fromUserID *types.UserID, toUserID *
 	}
 	if up.State == types.ApprovalStateApproved {
 		requests := []types.FriendRequest{}
-		if err := tx.Select("FromUserID", "ToUserID").Find(&requests).Error; err != nil {
+		// gorm v1.31+ carries forward struct-based WHERE conditions from an
+		// earlier Updates call into the next Find, producing an ambiguous
+		// `friend_requests.namespace` qualifier. Use a fresh Session scoped
+		// to the same namespace to re-issue the SELECT cleanly.
+		q := tx.Session(&gorm.Session{NewDB: true}).Model(&types.FriendRequest{}).
+			Where(&types.FriendRequest{Namespace: namespace, State: types.ApprovalStateApproved})
+		if fromUserID != nil {
+			q = q.Where(&types.FriendRequest{FromUserID: *fromUserID})
+		}
+		if toUserID != nil {
+			q = q.Where(&types.FriendRequest{ToUserID: *toUserID})
+		}
+		if len(idList) >= 1 {
+			q = q.Where("id in ?", idList)
+		}
+		if err := q.Select("FromUserID", "ToUserID").Find(&requests).Error; err != nil {
 			return err
 		}
 		var users []*types.User
