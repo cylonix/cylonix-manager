@@ -307,5 +307,5 @@ replace (
 	github.com/cylonix/utils => ./utils
 	github.com/cylonix/wg_agent => ./clients/wg
 	github.com/juanfont/headscale => ./submodules/headscale
-	tailscale.com => github.com/cylonix/tailscale v1.96.4-cylonix.1
+	tailscale.com => github.com/cylonix/tailscale v1.96.4-cylonix.2
 )
