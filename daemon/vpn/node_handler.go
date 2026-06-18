@@ -68,10 +68,17 @@ func nodeIDUint64P(node *hstypes.Node) *uint64 {
 }
 
 func nodeAddresses(node *hstypes.Node) ([]netip.Prefix, error) {
-	// TODO: add v6 support.
+	// v4 first, then v6, so the serialized Addresses string is deterministic.
 	var addresses []netip.Prefix
 	if node.IPv4 != nil {
 		prefix, err := node.IPv4.Prefix(32)
+		if err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, prefix)
+	}
+	if node.IPv6 != nil {
+		prefix, err := node.IPv6.Prefix(128)
 		if err != nil {
 			return nil, err
 		}
@@ -138,6 +145,68 @@ func (n *NodeHandler) updateNode(wgInfo *types.WgInfo, node *hstypes.Node, nodeK
 		}
 	}
 	return nil
+}
+
+// ensureNodeIPv6 allocates an IPv6 address for a node that was assigned only a
+// v4 address before v6 support existed, and persists it to the cylonix WgInfo. It
+// is idempotent: if the node already has a v6 address (on the node or on its
+// WgInfo) it is a no-op. It mutates node.IPv6 and returns the address that was
+// assigned (newly allocated or recovered from the WgInfo) so callers can persist
+// it to the headscale node row; it returns (nil, nil) when nothing needed doing.
+func (n *NodeHandler) ensureNodeIPv6(node *hstypes.Node) (*netip.Addr, error) {
+	if node.IPv6 != nil {
+		return nil, nil
+	}
+	userInfo := n.getUserInfo(node.User)
+	if userInfo == nil {
+		return nil, fmt.Errorf("failed to parse user information: %v", node.User)
+	}
+	namespace, userID := userInfo.Namespace, userInfo.UserID
+	machineKey, err := node.MachineKey.MarshalText()
+	if err != nil {
+		return nil, err
+	}
+	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
+	if err != nil {
+		if errors.Is(err, db.ErrDeviceWgInfoNotExists) {
+			// No device record yet; nothing to backfill.
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// If the WgInfo already carries a v6 address (e.g. it was persisted but the
+	// node row's ipv6 column was not), recover it rather than allocating again.
+	for _, p := range wgInfo.Addresses {
+		if p.Addr().Is6() {
+			v6 := p.Addr()
+			node.IPv6 = &v6
+			return &v6, nil
+		}
+	}
+
+	nodeKeyHex, err := nodeKeyToHex(node.NodeKey)
+	if err != nil {
+		return nil, err
+	}
+	v6, err := vpnpkg.AllocateIPv6(namespace, userID.String(), string(machineKey))
+	if err != nil {
+		return nil, err
+	}
+	node.IPv6 = v6
+	if err := n.updateNode(wgInfo, node, nodeKeyHex); err != nil {
+		vpnpkg.ReleaseIP(namespace, v6.String())
+		node.IPv6 = nil
+		return nil, err
+	}
+	return v6, nil
+}
+
+// BackfillNodeIPv6 implements the headscale NodeHandler interface. It is invoked
+// from the poll/MapRequest path so that devices reconnecting without
+// re-registering also get a v6 address backfilled.
+func (n *NodeHandler) BackfillNodeIPv6(node *hstypes.Node) (*netip.Addr, error) {
+	return n.ensureNodeIPv6(node)
 }
 
 func (n *NodeHandler) createWgClientNode(wgInfo *types.WgInfo) (err error) {
@@ -406,7 +475,13 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 
 	wgInfo, err := db.WgInfoByMachineKey(namespace, userID, string(machineKey))
 	if err == nil {
-		// Node exists. Update the wg info and then return.
+		// Node exists. Backfill a v6 address if it was assigned only a v4 one
+		// before v6 support existed. node.IPv6 is persisted to the headscale
+		// node row by RegisterNodePreAdd's tx save.
+		if _, err := n.ensureNodeIPv6(node); err != nil {
+			return nil, err
+		}
+		// Update the wg info and then return.
 		currentHex, err := vpnpkg.NodeKeyToHexString(node.NodeKey)
 		if err != nil {
 			return nil, err

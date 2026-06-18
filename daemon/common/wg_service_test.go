@@ -490,8 +490,16 @@ func TestGetNewWgInfo(t *testing.T) {
 }
 
 func TestAllowedIPsInWgAgent(t *testing.T) {
-	s := AllowedIPsInWgAgent(testWgNamespace, "test-user", "", "1.1.1.1", []string{"2.2.2.2"})
-	assert.Equal(t, 1, len(s))
+	s := AllowedIPsInWgAgent(testWgNamespace, "test-user", "", []string{"1.1.1.1"}, []string{"2.2.2.2"})
+	if assert.Equal(t, 1, len(s)) {
+		assert.Equal(t, "1.1.1.1/32", s[0])
+	}
+	// v4 and v6 get the correct host prefix.
+	s = AllowedIPsInWgAgent(testWgNamespace, "test-user", "", []string{"1.1.1.1", "fd7a:115c:a1e0::5"}, nil)
+	if assert.Equal(t, 2, len(s)) {
+		assert.Equal(t, "1.1.1.1/32", s[0])
+		assert.Equal(t, "fd7a:115c:a1e0::5/128", s[1])
+	}
 }
 
 func TestDeleteWgInfo(t *testing.T) {

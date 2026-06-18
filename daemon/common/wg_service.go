@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -1321,16 +1322,33 @@ func DeleteWgInfo(wgInfo *models.WgDevice) error {
 	}
 	namespace := wgInfo.Namespace
 	popName := optional.String(wgInfo.WgName) // TODO: FixME
-	ret := ipdrawer.ReleaseIPAddr(namespace, popName, wgInfo.Addresses[0])
+	var ret error
+	for _, addr := range wgInfo.Addresses {
+		if err := ipdrawer.ReleaseIPAddr(namespace, popName, addr); err != nil {
+			ret = err
+		}
+	}
 	if err := DeleteDeviceInWgAgent(wgInfo); err != nil {
 		ret = err
 	}
 	return ret
 }
 
-func AllowedIPsInWgAgent(namespace, username, deviceID, ip string, routableIPs []string) []string {
-	ips := []string{ip + "/32"}
+func AllowedIPsInWgAgent(namespace, username, deviceID string, addrs []string, routableIPs []string) []string {
+	ips := make([]string, 0, len(addrs))
+	for _, ip := range addrs {
+		ips = append(ips, hostPrefix(ip))
+	}
 	return ips
+}
+
+// hostPrefix returns the single-host CIDR for an address: /32 for IPv4, /128
+// for IPv6. Falls back to /32 if the address cannot be parsed.
+func hostPrefix(ip string) string {
+	if addr, err := netip.ParseAddr(ip); err == nil && addr.Is6() {
+		return ip + "/128"
+	}
+	return ip + "/32"
 }
 
 // We need more info to create a WG user to be closer to the location of the user
@@ -1357,21 +1375,34 @@ func GetNewWgInfo(userID types.UserID, username string, deviceUUID uuid.UUID, pk
 		log.WithError(err).Error("Failed to allocate IP")
 		return nil, fmt.Errorf("%w: %w", ErrWgFailedToAllocateIP, err)
 	}
+	addresses := []string{ip}
+
+	// Allocate a v6 address from the v6 pool alongside the v4 one. Release the
+	// v4 if v6 allocation fails so we don't leak it.
+	ipv6, err := ipdrawer.AllocateIPv6Addr(namespace, wgName, deviceUUID.String(), nil)
+	if err != nil {
+		ipdrawer.ReleaseIPAddr(namespace, wgName, ip)
+		log.WithError(err).Error("Failed to allocate IPv6")
+		return nil, fmt.Errorf("%w: %w", ErrWgFailedToAllocateIP, err)
+	}
+	addresses = append(addresses, ipv6)
 
 	su := GetSupervisorService()
 	if su != nil {
-		err := su.AddAppRoute(namespace, wgName, []string{ip})
+		err := su.AddAppRoute(namespace, wgName, addresses)
 		if err != nil {
-			ipdrawer.ReleaseIPAddr(namespace, wgName, ip)
+			for _, a := range addresses {
+				ipdrawer.ReleaseIPAddr(namespace, wgName, a)
+			}
 			return nil, fmt.Errorf("%w: %w", ErrWgFailedToAddRoute, err)
 		}
 	}
 
 	deviceUUIDStr := deviceUUID.String()
-	ips := AllowedIPsInWgAgent(namespace, username, deviceUUIDStr, ip, routableIPs)
+	ips := AllowedIPsInWgAgent(namespace, username, deviceUUIDStr, addresses, routableIPs)
 	wgInfo := &models.WgDevice{
 		Name:       username,
-		Addresses:  []string{ip},
+		Addresses:  addresses,
 		DeviceID:   deviceUUID,
 		UserID:     userID.UUID(),
 		Namespace:  namespace,
