@@ -1,0 +1,17 @@
+# Runtime image assembled from host-prebuilt binaries (docker/prebuilt/).
+# Mirrors the runtime stage of deploy/compose/Dockerfile (the Dockerfile used
+# for manage-v2 deploys), but skips in-container compilation so the binaries
+# can be integrity-verified on the host first.
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates gettext bash postgresql-client
+
+COPY docker/prebuilt/manager /usr/local/bin/manager
+COPY docker/prebuilt/task    /usr/local/bin/task
+
+COPY docker/entrypoint.sh /opt/entrypoint.sh
+COPY docker/defaults.sh   /opt/defaults.sh
+COPY docker/templates     /opt/templates
+
+ENTRYPOINT ["/opt/entrypoint.sh"]
+CMD ["manager", "--log-level", "info"]
