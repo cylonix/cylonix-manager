@@ -24,8 +24,44 @@ type UserMetricCount struct {
 	Total  int64
 }
 
+// onlineLastSeenCutoff is the LastSeen recency window still honored for devices
+// whose online state is reported via LastSeen — i.e. wg-only devices, whose
+// LastSeen is refreshed through the gRPC UpdateNode (wg-stat) path. Mesh /
+// tailscale nodes instead use the live NodeStore online set (onlineNodeIDs),
+// because in headscale v0.28 a node's LastSeen is only written on disconnect
+// and no longer reflects an active connection.
+func onlineLastSeenCutoff() int64 { return time.Now().Unix() - 180 }
+
+// applyUserOnlineFilter restricts a users query to those considered online:
+// users owning a mesh node currently connected (node_id in the live set) OR a
+// user with a recent LastSeen (wg-only). With an empty set it degrades to the
+// LastSeen-only behavior (e.g. when the vpn subsystem is not yet ready).
+func applyUserOnlineFilter(db *gorm.DB, onlineNodeIDs []uint64) *gorm.DB {
+	cutoff := onlineLastSeenCutoff()
+	if len(onlineNodeIDs) == 0 {
+		return db.Where("last_seen > ?", cutoff)
+	}
+	return db.Where(
+		"id IN (SELECT user_id FROM wg_infos WHERE node_id IN ?) OR last_seen > ?",
+		onlineNodeIDs, cutoff,
+	)
+}
+
+// applyDeviceOnlineFilter is the device-table counterpart of
+// applyUserOnlineFilter (qualified with the devices table for joined queries).
+func applyDeviceOnlineFilter(db *gorm.DB, onlineNodeIDs []uint64) *gorm.DB {
+	cutoff := onlineLastSeenCutoff()
+	if len(onlineNodeIDs) == 0 {
+		return db.Where("devices.last_seen > ?", cutoff)
+	}
+	return db.Where(
+		"devices.id IN (SELECT device_id FROM wg_infos WHERE node_id IN ?) OR devices.last_seen > ?",
+		onlineNodeIDs, cutoff,
+	)
+}
+
 func GetUserList(
-	namespace *string, networkDomain *string, onlineOnly bool,
+	namespace *string, networkDomain *string, onlineOnly bool, onlineNodeIDs []uint64,
 	filterBy, filterValue, contain, sortBy, sortDesc *string,
 	wgEnable *bool, forUserIDs []types.UserID, page, pageSize *int,
 ) ([]*types.User, int64, error) {
@@ -51,7 +87,7 @@ func GetUserList(
 		pg = pg.Where("network_domain = ? ", *networkDomain)
 	}
 	if onlineOnly {
-		pg = pg.Where("last_seen > ?", time.Now().Unix()-180)
+		pg = applyUserOnlineFilter(pg, onlineNodeIDs)
 	}
 	if filterBy != nil && *filterBy != "" && filterValue != nil {
 		if *filterBy == "is_admin_user" || *filterBy == "is_sys_admin" {
@@ -528,7 +564,7 @@ func addUser(
 		return nil, fmt.Errorf("%w: tenant config not found for namespace %s", ErrTenantConfigNotFound, namespace)
 	}
 	if tenant.MaxUser != 0 {
-		userCount, err := UserCount(&namespace, nil, false)
+		userCount, err := UserCount(&namespace, nil, false, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -573,7 +609,7 @@ func addUser(
 
 	// Check user limit by the network domain.
 	if !optional.Bool(isSysAdmin) {
-		n, err := UserCount(&namespace, networkDomain, false)
+		n, err := UserCount(&namespace, networkDomain, false, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count users for network domain %s: %w", *networkDomain, err)
 		}
@@ -892,17 +928,19 @@ func UpdateUser(tx *gorm.DB, namespace string, userID types.UserID, update *mode
 	return tx.Commit().Error
 }
 
-func OnlineDeviceCountUserIDMap(namespace string) (map[types.UserID]int64, error) {
+func OnlineDeviceCountUserIDMap(namespace string, onlineNodeIDs []uint64) (map[types.UserID]int64, error) {
 	ret := map[types.UserID]int64{}
 	userDeviceCountList := []*UserMetricCount{}
 	pg, err := postgres.Connect()
 	if err != nil {
 		return ret, err
 	}
-	if err := pg.Raw(
-		"select user_id, count(id) total from devices where namespace = ? and last_seen > ? group by user_id",
-		namespace, time.Now().Unix()-180).
-		Find(&userDeviceCountList).Error; err != nil {
+	q := pg.Model(&types.Device{}).
+		Select("user_id, count(id) total").
+		Where("namespace = ?", types.NormalizeNamespace(namespace)).
+		Group("user_id")
+	q = applyDeviceOnlineFilter(q, onlineNodeIDs)
+	if err := q.Find(&userDeviceCountList).Error; err != nil {
 		return ret, err
 	}
 	for _, userDeviceCount := range userDeviceCountList {
@@ -931,7 +969,7 @@ func LabelCountUserIDMap() (map[types.UserID]int64, error) {
 	return ret, nil
 }
 
-func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string, onlineOnly bool) (int64, error) {
+func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string, onlineOnly bool, onlineNodeIDs []uint64) (int64, error) {
 	db, err := postgres.Connect()
 	if err != nil || db == nil {
 		return 0, fmt.Errorf("failed to connect to db: %w", err)
@@ -948,7 +986,7 @@ func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string,
 		db = db.Where("network_domain = ?", networkDomain)
 	}
 	if onlineOnly {
-		db = db.Where("last_seen > ?", time.Now().Unix()-180)
+		db = applyDeviceOnlineFilter(db, onlineNodeIDs)
 	}
 	var ret int64
 	if err := db.Count(&ret).Error; err != nil {
@@ -957,7 +995,7 @@ func DeviceCount(namespace *string, userID *types.UserID, networkDomain *string,
 	return ret, nil
 }
 
-func UserCount(namespace *string, networkDomain *string, onlineOnly bool) (int64, error) {
+func UserCount(namespace *string, networkDomain *string, onlineOnly bool, onlineNodeIDs []uint64) (int64, error) {
 	db, err := postgres.Connect()
 	if err != nil || db == nil {
 		return 0, fmt.Errorf("failed to connect to db: %w", err)
@@ -971,7 +1009,7 @@ func UserCount(namespace *string, networkDomain *string, onlineOnly bool) (int64
 		db = db.Where("network_domain = ?", networkDomain)
 	}
 	if onlineOnly {
-		db = db.Where("last_seen > ?", time.Now().Unix()-180)
+		db = applyUserOnlineFilter(db, onlineNodeIDs)
 	}
 	var ret int64
 	if err := db.Count(&ret).Error; err != nil {

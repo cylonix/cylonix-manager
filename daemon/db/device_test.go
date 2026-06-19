@@ -59,7 +59,7 @@ func TestDeviceDB(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Len(t, deviceList, 4)
 
-		devices, total, err := ListDevice(&namespace, nil, false, nil, nil, nil, nil, nil, nil, nil)
+		devices, total, err := ListDevice(&namespace, nil, false, nil,nil, nil, nil, nil, nil, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, 4, int(total))
 		if assert.Len(t, devices, 4) {
@@ -146,7 +146,7 @@ func TestDeviceDB(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, len(deviceIDList), 3)
 
-		allDeviceList, total, err := ListDevice(&namespace, nil, false, nil, nil, nil, nil, nil, nil, nil)
+		allDeviceList, total, err := ListDevice(&namespace, nil, false, nil,nil, nil, nil, nil, nil, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, 3, len(allDeviceList))
 		assert.Equal(t, 3, int(total))
@@ -342,7 +342,7 @@ func TestDeviceDB(t *testing.T) {
 		// Test sorting by WgInfo name (ascending)
 		sortBy := "wg_name"
 		sortDesc := "asc"
-		devices, total, err := ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err := ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {
@@ -353,7 +353,7 @@ func TestDeviceDB(t *testing.T) {
 
 		// Test sorting by WgInfo name (descending)
 		sortDesc = "desc"
-		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err = ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {
@@ -365,7 +365,7 @@ func TestDeviceDB(t *testing.T) {
 		// Test sorting by public key
 		sortBy = "public_key"
 		sortDesc = "asc"
-		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err = ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {
@@ -377,7 +377,7 @@ func TestDeviceDB(t *testing.T) {
 		// Test sorting by IP address
 		sortBy = "ip"
 		sortDesc = "asc"
-		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err = ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {
@@ -389,7 +389,7 @@ func TestDeviceDB(t *testing.T) {
 		// Test sorting by rx_bytes
 		sortBy = "rx_bytes"
 		sortDesc = "asc"
-		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err = ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {
@@ -401,7 +401,7 @@ func TestDeviceDB(t *testing.T) {
 		// Test sorting by tx_bytes (descending)
 		sortBy = "tx_bytes"
 		sortDesc = "desc"
-		devices, total, err = ListDevice(&namespace, nil, false, nil, nil, nil, &sortBy, &sortDesc, nil, nil)
+		devices, total, err = ListDevice(&namespace, nil, false, nil,nil, nil, nil, &sortBy, &sortDesc, nil, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, int64(3), total)
 		if assert.Len(t, devices, 3) {

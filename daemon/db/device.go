@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cylonix/utils/postgres"
 	"gorm.io/gorm"
@@ -137,7 +136,7 @@ func DeleteUserDevices(tx *gorm.DB, namespace string, userID types.UserID, devic
 	return tx.Commit().Error
 }
 
-func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
+func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool, onlineNodeIDs []uint64,
 	capability, filterBy, filterValue, sortBy, sortDesc *string,
 	page, pageSize *int,
 ) ([]types.Device, int64, error) {
@@ -165,7 +164,7 @@ func ListDevice(namespace *string, userIDs []types.UserID, onlineOnly bool,
 		db = db.Where("device_id in ?", cid)
 	}
 	if onlineOnly {
-		db = db.Where("devices.last_seen > ?", time.Now().Unix()-180)
+		db = applyDeviceOnlineFilter(db, onlineNodeIDs)
 	}
 	db = filter(db, filterBy, filterValue)
 

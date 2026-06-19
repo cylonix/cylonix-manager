@@ -59,6 +59,38 @@ func headscaleReady() bool {
 	return headscale != nil || headscaleForTest
 }
 
+// onlineNodeIDsForTest lets tests inject the online node-id set without a real
+// headscale instance (paired with SetHeadscaleForTest).
+var onlineNodeIDsForTest []uint64
+
+// SetOnlineNodeIDsForTest sets the value returned by OnlineNodeIDs when running
+// with headscaleForTest enabled and no real headscale instance.
+func SetOnlineNodeIDsForTest(ids []uint64) { onlineNodeIDsForTest = ids }
+
+// OnlineNodeIDs returns the IDs of nodes currently connected per headscale's
+// NodeStore — the source of truth for online status in v0.28 (Connect sets
+// IsOnline; LastSeen is only written on Disconnect). The manager uses this to
+// compute online device/user counts from live connection state instead of
+// LastSeen recency. Returns (nil, nil) when headscale is not yet initialized
+// but init errors are being ignored.
+func OnlineNodeIDs() ([]uint64, error) {
+	if !headscaleReady() {
+		if ignoreHeadscaleInitError {
+			return nil, nil
+		}
+		return nil, ErrHeadscaleNotInitialized
+	}
+	if headscale == nil { // test mode (headscaleForTest)
+		return onlineNodeIDsForTest, nil
+	}
+	ids := headscale.ListOnlineNodeIDs()
+	out := make([]uint64, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.Uint64())
+	}
+	return out, nil
+}
+
 func Run(nodeHandler hstypes.NodeHandler, logger *logrus.Entry) error {
 	return runHeadscale(nodeHandler, logger)
 }

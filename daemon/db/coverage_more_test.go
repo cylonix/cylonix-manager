@@ -247,13 +247,13 @@ func TestUser_CountsAndMaps(t *testing.T) {
 	_, cleanup := buildUserWithTenant(t, "ns-counts", "counts-user")
 	defer cleanup()
 
-	_, err := OnlineDeviceCountUserIDMap("ns-counts")
+	_, err := OnlineDeviceCountUserIDMap("ns-counts", nil)
 	assert.NoError(t, err)
 
 	_, err = LabelCountUserIDMap()
 	_ = err // user_label_relation table may not exist; exercise the path.
 
-	n, err := UserCount(optional.StringP("ns-counts"), nil, false)
+	n, err := UserCount(optional.StringP("ns-counts"), nil, false, nil)
 	assert.NoError(t, err)
 	_ = n
 }

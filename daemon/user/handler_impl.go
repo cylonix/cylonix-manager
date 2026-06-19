@@ -106,9 +106,18 @@ func (h *handlerImpl) GetUserList(auth interface{}, requestObject api.GetUserLis
 		}
 	}
 
+	var onlineNodeIDs []uint64
+	if optional.Bool(params.OnlineOnly) {
+		ids, oerr := vpn.OnlineNodeIDs()
+		if oerr != nil {
+			logger.WithError(oerr).Warnln("Online node set unavailable; online filter falls back to last_seen.")
+		} else {
+			onlineNodeIDs = ids
+		}
+	}
 	userList, total, err := db.GetUserList(
 		namespaceP, ofNetworkDomain,
-		optional.Bool(params.OnlineOnly),
+		optional.Bool(params.OnlineOnly), onlineNodeIDs,
 		params.FilterBy, params.FilterValue, nil,
 		params.SortBy, params.SortDesc, nil, idList, params.Page,
 		params.PageSize,
@@ -1461,25 +1470,33 @@ func (h *handlerImpl) UserSummary(auth interface{}, requestObject api.GetUserSum
 	}
 
 	if params.Days == nil {
-		deviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, false)
+		// Online status comes from headscale's live NodeStore connection set
+		// (the source of truth in v0.28), not LastSeen recency. If the vpn
+		// subsystem isn't ready yet, fall back to LastSeen-only via a nil set.
+		onlineNodeIDs, err := vpn.OnlineNodeIDs()
+		if err != nil {
+			logger.WithError(err).Warnln("Online node set unavailable; online counts fall back to last_seen.")
+			onlineNodeIDs = nil
+		}
+		deviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, false, nil)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get device count.")
 			return nil, common.ErrInternalErr
 		}
-		onlineDeviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, true)
+		onlineDeviceCount, err := db.DeviceCount(ofNamespace, ofUserID, ofNetworkDomain, true, onlineNodeIDs)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get online device count.")
 			return nil, common.ErrInternalErr
 		}
 		userCount := int64(1)
 		if ofUserID == nil {
-			userCount, err = db.UserCount(ofNamespace, ofNetworkDomain, false)
+			userCount, err = db.UserCount(ofNamespace, ofNetworkDomain, false, nil)
 			if err != nil {
 				logger.WithError(err).Errorln("Failed to get user count.")
 				return nil, common.ErrInternalErr
 			}
 		}
-		onlineUserCount, err := db.UserCount(ofNamespace, ofNetworkDomain, true)
+		onlineUserCount, err := db.UserCount(ofNamespace, ofNetworkDomain, true, onlineNodeIDs)
 		if err != nil {
 			logger.WithError(err).Errorln("Failed to get online user count.")
 			return nil, common.ErrInternalErr

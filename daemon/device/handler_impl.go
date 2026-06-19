@@ -110,9 +110,18 @@ func (h *handlerImpl) GetDevices(auth interface{}, requestObject api.GetDevicesR
 		targetUserIDs = []types.UserID{userID}
 	}
 
+	var onlineNodeIDs []uint64
+	if optional.Bool(params.OnlineOnly) {
+		ids, oerr := vpn.OnlineNodeIDs()
+		if oerr != nil {
+			logger.WithError(oerr).Warnln("Online node set unavailable; online filter falls back to last_seen.")
+		} else {
+			onlineNodeIDs = ids
+		}
+	}
 	devices, total, err := db.ListDevice(
 		namespaceP, targetUserIDs,
-		optional.Bool(params.OnlineOnly),
+		optional.Bool(params.OnlineOnly), onlineNodeIDs,
 		params.Capability,
 		params.FilterBy, params.FilterValue,
 		params.SortBy, params.SortDesc,

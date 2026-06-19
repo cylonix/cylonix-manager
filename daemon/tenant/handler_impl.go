@@ -298,7 +298,7 @@ func (h *handlerImpl) DeleteConfigs(auth interface{}, requestObject api.DeleteTe
 			}
 			continue
 		}
-		userCount, err := db.UserCount(&t.Namespace, nil, false)
+		userCount, err := db.UserCount(&t.Namespace, nil, false, nil)
 		if err != nil {
 			log.WithError(err).Errorln("Failed to get tenant's user count.")
 			return common.ErrInternalErr

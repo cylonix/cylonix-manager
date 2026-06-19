@@ -279,7 +279,7 @@ func TestDeviceCount_ByUser(t *testing.T) {
 	if u == nil {
 		return
 	}
-	_, err := DeviceCount(optional.StringP("ns-dcount"), &u.ID, nil, false)
+	_, err := DeviceCount(optional.StringP("ns-dcount"), &u.ID, nil, false, nil)
 	_ = err
 }
 
