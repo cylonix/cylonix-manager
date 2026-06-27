@@ -412,6 +412,16 @@ func GetNode(namespace string, userID *types.ID, nodeID uint64) (*hstypes.Node, 
 	if err != nil {
 		return nil, err
 	}
+	// ParseProtoNode intentionally omits User: it is also used on the server
+	// write path (CreateNode/UpdateNode), where client-supplied ownership must
+	// be ignored for tenant safety. On this read path we DO want the node's
+	// owner, so hydrate node.User from the proto so the userID check below and
+	// callers (wg-node sync) see it.
+	if pu := response.Node.GetUser(); pu != nil {
+		u := &hstypes.User{}
+		u.FromProto(pu)
+		node.User = u
+	}
 	if namespace != "" && node.Namespace != namespace {
 		return nil, fmt.Errorf("node namespace mismatch: expected %v, got %v", namespace, node.Namespace)
 	}
