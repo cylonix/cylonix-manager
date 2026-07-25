@@ -43,6 +43,32 @@ func getUser(
 	logger *logrus.Entry,
 ) (loginUser *types.UserLogin, user *types.User, state *types.ApprovalState, err error) {
 	namespace := login.Namespace
+	// For oauth logins, match by the IdP's stable ID (provider + OIDC "sub")
+	// first. login_name is derived from the email claim, and IdPs can change
+	// whether the ID token carries email (e.g. a nextcloud custom-OIDC
+	// upgrade dropped it) — in which case a pseudo login_name is synthesized
+	// and a lookup by login_name would silently mint a duplicate user
+	// instead of matching the existing identity.
+	if login.IdpID != "" {
+		loginUser, err = db.GetUserLoginByIdpID(namespace, login.IdpID)
+		if err == nil {
+			if loginUser.LoginName != login.LoginName {
+				logger.WithField("login-name", loginUser.LoginName).
+					WithField("claimed-login-name", login.LoginName).
+					Infoln("Matched existing user login by idp_id; login_name claim has changed.")
+			}
+			user, err = db.GetUserFast(namespace, loginUser.UserID, true)
+			if err != nil {
+				err = fmt.Errorf("failed to get user by login: %w", err)
+				return
+			}
+			return
+		}
+		if !errors.Is(err, db.ErrUserLoginNotExists) {
+			err = fmt.Errorf("failed to get user login by idp id from db: %w", err)
+			return
+		}
+	}
 	loginUser, err = db.GetUserLoginByLoginName(namespace, login.LoginName)
 	if err == nil {
 		user, err = db.GetUserFast(namespace, loginUser.UserID, true)

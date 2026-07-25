@@ -528,6 +528,36 @@ func GetUserLoginByLoginName(namespace, loginName string) (*types.UserLogin, err
 	}
 	return ret, nil
 }
+
+// GetUserLoginByIdpID looks up a user login by the identity provider's stable
+// ID (provider + OIDC "sub"). Unlike login_name — which is derived from the
+// email claim and hence changes if the IdP stops or starts including email in
+// the ID token — the idp_id is stable across logins. Returns the OLDEST match
+// so that an accidentally created duplicate login (from a pseudo login_name
+// minted while the email claim was missing) never shadows the original
+// identity.
+func GetUserLoginByIdpID(namespace, idpID string) (*types.UserLogin, error) {
+	if idpID == "" {
+		return nil, ErrUserLoginNotExists
+	}
+	tx, err := getPGconn()
+	if err != nil {
+		return nil, err
+	}
+	ret := &types.UserLogin{}
+	tx = tx.Model(&types.UserLogin{}).Where("idp_id = ?", idpID)
+	if namespace != "" {
+		tx = tx.Where("namespace = ?", namespace)
+	}
+	err = tx.Preload("CustomAuth").Order("created_at asc").First(ret).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserLoginNotExists
+		}
+		return nil, err
+	}
+	return ret, nil
+}
 func GetUserLoginCacheOnly(namespace string, loginID types.LoginID) (*types.UserLogin, error) {
 	return getUserLoginFast(namespace, loginID, true /* no fallback */)
 }
