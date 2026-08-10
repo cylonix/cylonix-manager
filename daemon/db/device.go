@@ -633,7 +633,9 @@ func GetWgNodeIDListByUserID(namespace string, userID *types.UserID) ([]uint64, 
 	if userID != nil {
 		query.UserID = *userID
 	}
-	pg = pg.Model(&types.WgInfo{}).Select("node_id").Where(query)
+	// Skip rows not yet registered with a mesh node ID: scanning a NULL
+	// node_id into []uint64 fails the whole query.
+	pg = pg.Model(&types.WgInfo{}).Select("node_id").Where(query).Where("node_id IS NOT NULL")
 	err = pg.Find(&ret).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		err = ErrDeviceWgInfoNotExists
@@ -649,7 +651,8 @@ func GetWgNodeIDListByUserIDList(namespace string, userIDList []types.UserID) ([
 	result := []uint64{}
 	tx = tx.Model(&types.WgInfo{}).
 		Select("node_id").
-		Where("namespace = ? and user_id in ?", namespace, userIDList)
+		Where("namespace = ? and user_id in ?", namespace, userIDList).
+		Where("node_id IS NOT NULL")
 	if err := tx.Find(&result).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -685,6 +688,7 @@ func GetWgNodeIDListByVpnLabels(namespace string, labels []types.Label) ([]uint6
 	tx = tx.Model(&types.WgInfo{}).
 		Select("node_id").
 		Where("namespace = ? and id in ?", namespace, deviceIDs).
+		Where("node_id IS NOT NULL").
 		Find(&result)
 	if err = tx.Error; err != nil {
 		return nil, err
@@ -759,6 +763,22 @@ func UpdateWgInfo(tx *gorm.DB, deviceID types.DeviceID, updateWgInfo *types.WgIn
 	return tx.
 		Model(&types.WgInfo{Model: types.Model{ID: deviceID}}).
 		Updates(*updateWgInfo).Error
+}
+
+// ClearWgInfoNodeID clears the mesh node ID of the wg info row holding the
+// given node ID, e.g. when the node is deleted in headscale. The device row
+// is kept; the node ID is backfilled if the device registers again. Note
+// UpdateWgInfo cannot be used for this since gorm struct updates skip nil
+// fields.
+func ClearWgInfoNodeID(nodeID uint64) error {
+	pg, err := postgres.Connect()
+	if err != nil {
+		return err
+	}
+	return pg.
+		Model(&types.WgInfo{}).
+		Where("node_id = ?", nodeID).
+		Update("node_id", nil).Error
 }
 
 func UpdateWgInfoWgNode(deviceID types.DeviceID, newWgID, newWgName string) error {

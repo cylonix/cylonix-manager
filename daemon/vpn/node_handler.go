@@ -573,8 +573,17 @@ func (n *NodeHandler) PostAdd(node *hstypes.Node) error {
 }
 
 func (n *NodeHandler) Delete(node *hstypes.Node) error {
-	// No-op for now as we will only delete the device from the device APIs.
-	// TODO: may be mark wg-info to be in deleted state?
+	// The device itself is only deleted from the device APIs. Clear the mesh
+	// node ID of the wg info so that a node deleted in headscale does not
+	// linger in the peer node ID lists. The node ID is backfilled if the
+	// device registers again.
+	if err := db.ClearWgInfoNodeID(node.ID.Uint64()); err != nil {
+		n.logger.
+			WithField("node-id", node.ID.Uint64()).
+			WithError(err).
+			Errorln("failed to clear wg info node ID for deleted node")
+		return err
+	}
 	return nil
 }
 
