@@ -17,6 +17,7 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"sync"
 
 	"github.com/cylonix/utils"
 	ulog "github.com/cylonix/utils/log"
@@ -31,6 +32,14 @@ import (
 type NodeHandler struct {
 	vpnService *VpnService
 	logger     *logrus.Entry
+
+	// networkDomainCache holds the last-known-good network domain per user
+	// ID. It is consulted only when the DB lookup fails: the Domain of a
+	// map response feeds the client-side l2relay segment hash, so a
+	// transient DB error must not swap in a different domain (segment
+	// churn / leader flaps across the tenant's LAN). The DB remains the
+	// source of truth whenever it is reachable.
+	networkDomainCache sync.Map
 }
 
 var (
@@ -929,9 +938,15 @@ func (n *NodeHandler) NetworkDomain(user *hstypes.User) ([]byte, error) {
 		WithField(ulog.UserID, u.UserID)
 	nd, err := db.GetUserNetworkDomain(u.UserID)
 	if err != nil {
+		if v, ok := n.networkDomainCache.Load(u.UserID); ok {
+			logger.WithError(err).
+				Warnln("failed to get network domain; serving last-known-good value")
+			return []byte(v.(string)), nil
+		}
 		logger.WithError(err).Warnln("failed to get network domain")
 		return nil, err
 	}
+	n.networkDomainCache.Store(u.UserID, nd)
 	return []byte(nd), nil
 }
 
