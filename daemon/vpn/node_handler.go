@@ -550,8 +550,16 @@ func (n *NodeHandler) PreAdd(node *hstypes.Node) (*hstypes.Node, error) {
 		return nil, err
 	}
 
-	// Save device ID to the node's stable ID.
-	node.StableID = wgInfo.ID.StringP()
+	// Save device ID to the node's stable ID. Never persist a nil device ID:
+	// it serializes as the all-zero UUID, which is shared by every node
+	// written the same way and breaks the per-node uniqueness that clients
+	// rely on (peer resolution, peer-messaging conversation keys). Leaving
+	// StableID unset makes headscale fall back to the unique integer node ID.
+	if wgInfo.ID.IsNil() {
+		n.logger.Errorln("device wg info has nil ID; leaving node stable ID unset")
+	} else {
+		node.StableID = wgInfo.ID.StringP()
+	}
 	return node, nil
 }
 
