@@ -24,6 +24,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -545,12 +546,49 @@ func UpdateWgNode(su *types.UserBaseInfo, wgNode *types.WgNode) error {
 		NodeId:    wgNode.NodeID,
 		Namespace: su.Namespace,
 		Update:    node,
+		// Presence (online, endpoints) and routes go through headscale's state
+		// layer and are only announced to peers on a real change; "name" is the
+		// one admin field a gateway can change. Without a mask headscale would
+		// treat this as the legacy admin-only update and ignore presence.
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"online", "endpoints", "routes", "name"}},
 	}
 
 	client := getHsClient()
 	ctx, cancel := newHsClientContext()
 	defer cancel()
 	_, err = client.UpdateNode(ctx, request)
+	return err
+}
+
+// UpdateWgNodePresence reports a wg node's online state and endpoints to
+// headscale. It is safe to call on every heartbeat: headscale compares with
+// its in-memory state and does nothing (no database write, no peer
+// broadcast) when nothing changed, and the periodic call re-syncs presence
+// after a headscale restart, which otherwise leaves every gateway offline in
+// peers' netmaps.
+func UpdateWgNodePresence(su *types.UserBaseInfo, wgNode *types.WgNode) error {
+	if !headscaleReady() {
+		if ignoreHeadscaleInitError {
+			return nil
+		}
+		return ErrHeadscaleNotInitialized
+	}
+	request := &v1.UpdateNodeRequest{
+		NodeId:    wgNode.NodeID,
+		Namespace: su.Namespace,
+		Update: &v1.Node{
+			Id:        wgNode.NodeID,
+			Namespace: wgNode.Namespace,
+			Online:    optional.Bool(wgNode.IsOnline),
+			Endpoints: types.ToStringSlice(wgNode.Endpoints),
+		},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"online", "endpoints"}},
+	}
+
+	client := getHsClient()
+	ctx, cancel := newHsClientContext()
+	defer cancel()
+	_, err := client.UpdateNode(ctx, request)
 	return err
 }
 

@@ -495,20 +495,21 @@ func (c *WgClient) addNode(namespace string, log *logrus.Entry) error {
 		}
 
 		if existing.Equal(current) {
-			// Node last seen may need to be updated if:
-			// - Node is now online but was offline before with non-nil last seen
-			// - Node is now offline but was online before with nil last seen
-			if (node.LastSeen != nil && !optional.Bool(current.IsOnline)) ||
-				(node.LastSeen == nil && optional.Bool(current.IsOnline)) {
-				return nil
+			// Nothing changed locally. Still report presence: headscale treats
+			// it as a no-op when it already agrees, and the periodic call
+			// re-syncs the online flag after a headscale restart.
+			//
+			// The previous LastSeen heuristic ("online means headscale's
+			// LastSeen must be nil") could never be satisfied because the
+			// UpdateNode RPC ignored LastSeen, so it re-sent the whole node on
+			// every heartbeat; headscale then broadcast an unchanged node to
+			// every visible peer each time.
+			if err := vpn.UpdateWgNodePresence(&user.UserBaseInfo, current); err != nil {
+				return fmt.Errorf("failed to update wg node presence: %w", err)
 			}
-			log.WithFields(logrus.Fields{
-				"last_seen_is_nil": node.LastSeen == nil,
-				"is_online": optional.Bool(current.IsOnline),
-			}).Debugln("Wg node unchanged but needs to update node last seen")
-		} else {
-			log.Debugf("Wg node changed old=%+v new=%+v", existing, current)
+			return nil
 		}
+		log.Debugf("Wg node changed old=%+v new=%+v", existing, current)
 		if err = vpn.UpdateWgNode(&user.UserBaseInfo, current); err == nil {
 			err = db.UpdateWgNode(existing.ID, current)
 		}
